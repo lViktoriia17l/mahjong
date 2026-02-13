@@ -128,32 +128,43 @@ class MahjongGame:
         self.selected_tile = None
 
         c_w, c_h = self.canvas.winfo_width(), self.canvas.winfo_height()
-        syms = list(self.tile_symbols)
-        random.shuffle(syms)
 
-        t_w, t_h = 65, 85
+        # 50 тайлів (25 пар) відповідно до протоколу
+        active_symbols = list(self.tile_symbols[:50])
+        random.shuffle(active_symbols)
+
+        t_w, t_h = 60, 80
         gap = 2
         id_counter = 0
 
-        # --- ШАР 0: Прямокутник 8x6 (48 тайлів) ---
-        c0, r0 = 8, 6
-        s_x0 = (c_w - (c0 * t_w + (c0 - 1) * gap)) // 2
-        s_y0 = (c_h - (r0 * t_h + (r0 - 1) * gap)) // 2
+        # Опис шарів з документації: (cols, rows, layer_index)
+        layers_config = [
+            (5, 5, 0),  # Level 0: 25 tiles
+            (4, 4, 1),  # Level 1: 16 tiles
+            (3, 3, 2)  # Level 2: 9 tiles
+        ]
 
-        for i in range(48):
-            r, c = divmod(i, c0)
-            self.create_tile_obj(s_x0 + c * (t_w + gap), s_y0 + r * (t_h + gap), syms.pop(), 0, id_counter)
-            id_counter += 1
+        for cols, rows, z in layers_config:
+            # Розрахунок розміру поточного шару
+            layer_w = cols * t_w + (cols - 1) * gap
+            layer_h = rows * t_h + (rows - 1) * gap
 
-        # --- ШАР 1: Центрований 4x3 (12 тайлів) ---
-        c1, r1 = 4, 3
-        s_x1 = (c_w - (c1 * t_w + (c1 - 1) * gap)) // 2
-        s_y1 = (c_h - (r1 * t_h + (r1 - 1) * gap)) // 2
+            # Центрування
+            start_x = (c_w - layer_w) // 2
+            start_y = (c_h - layer_h) // 2
 
-        for i in range(12):
-            r, c = divmod(i, c1)
-            self.create_tile_obj(s_x1 + c * (t_w + gap) - 6, s_y1 + r * (t_h + gap) - 6, syms.pop(), 1, id_counter)
-            id_counter += 1
+            # Додаємо невелике зміщення (offset) для кожного наступного шару,
+            # щоб створити ефект піраміди (підйому вгору)
+            layer_offset = z * 5
+
+            for i in range(cols * rows):
+                r, c = divmod(i, cols)
+                x = start_x + c * (t_w + gap) - layer_offset
+                y = start_y + r * (t_h + gap) - layer_offset
+
+                # Створюємо об'єкт тайла
+                self.create_tile_obj(x, y, active_symbols.pop(), z, id_counter)
+                id_counter += 1
 
     def create_tile_obj(self, x, y, sym, layer, t_id):
         off = 4 if layer == 0 else 8
