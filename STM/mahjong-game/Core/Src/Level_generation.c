@@ -6,13 +6,13 @@
 #define TOTAL_PIECES 50
 
 // Tile Groups
-#define GRP_BAMBOO    0x00
-#define GRP_CHARS     0x01
-#define GRP_CIRCLES   0x02
-#define GRP_WINDS     0x03
-#define GRP_DRAGONS   0x04
-#define GRP_FLOWERS   0x05
-#define GRP_SEASONS   0x06
+#define GRP_BAMBOO    0b000
+#define GRP_CHARS     0b001
+#define GRP_CIRCLES   0b010
+#define GRP_WINDS     0b011
+#define GRP_DRAGONS   0b100
+#define GRP_FLOWERS   0b101
+#define GRP_SEASONS   0b110
 
 // Macro to pack Group + Value into 1 byte
 #define PACK_TILE(grp, val) ((uint8_t)(((grp & 0x07) << 5) | (val & 0x1F)))
