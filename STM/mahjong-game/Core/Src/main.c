@@ -3,9 +3,10 @@
 #include "main.h"
 #include <string.h>
 #include <stdio.h>
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
+#include <stdlib.h> // For rand
 
+/* USER CODE BEGIN Includes */
+#include "mahjong.h" // <--- 1. Summon the module
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -15,7 +16,12 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define CMD_START 0x01
+#define CMD_RESET 0x02
+#define CMD_SHUFFLE 0x03
+#define CMD_SELECT 0x04
+#define CMD_MATCH 0x05
+#define CMD_GET_STATE 0x06
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -27,73 +33,43 @@
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-
+/* --- Protocol Buffers --- */
+uint8_t rx_packet[3];       // [CMD, DATA, CRC] - Fixed 3 bytes
+uint8_t tx_packet[52];      // [CMD, 50xDATA, CRC]
+volatile uint8_t packet_ready = 0; // Flag to tell Main that data arrived
 /* USER CODE END PV */
-//Hello
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-void UART_CMD_Init(void);
-void UART_CMD_Task(void);
-void UART_SendString(const char *s);
+uint8_t Calc_CRC(uint8_t *data, uint8_t len);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-/* RX */
-uint8_t rxByte;
-char rxBuf[64];
-uint8_t rxIndex = 0;
-volatile uint8_t cmdReady = 0;
 
-/* --------- Send string --------- */
-void UART_SendString(const char *s)
-{
-    HAL_UART_Transmit(&huart1, (uint8_t*)s, strlen(s), 100);
+/* --------- Helper: CRC Calculation --------- */
+uint8_t Calc_CRC(uint8_t *data, uint8_t len) {
+    uint8_t crc = 0;
+    for(int i=0; i<len; i++) crc ^= data[i];
+    return crc;
 }
 
-/* --------- Init --------- */
-void UART_CMD_Init(void)
-{
-    rxIndex = 0;
-    cmdReady = 0;
-
-    /* start interrupt receive */
-    HAL_UART_Receive_IT(&huart1, &rxByte, 1);
-
-    UART_SendString("\r\n=== STM32 UART READY ===\r\n");
-    UART_SendString("Commands: PING, LED ON, LED OFF, HELP\r\n");
-}
-
-/* --------- UART RX callback --------- */
+/* --------- UART RX callback (Interrupt) --------- */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART1)
     {
-        // DEBUG: show that RX works (echo every byte)
-        HAL_UART_Transmit(&huart1, &rxByte, 1, 100);
+        // We received exactly 3 bytes into rx_packet
+        packet_ready = 1;
 
-        if (rxByte == '\r' || rxByte == '\n')
-        {
-            rxBuf[rxIndex] = 0;
-            rxIndex = 0;
-            cmdReady = 1;
-        }
-        else
-        {
-            if (rxIndex < sizeof(rxBuf) - 1)
-                rxBuf[rxIndex++] = rxByte;
-        }
-
-        HAL_UART_Receive_IT(&huart1, &rxByte, 1);
+        // Note: We do NOT restart the interrupt here immediately.
+        // We restart it in the main loop after processing to prevent
+        // overwriting the buffer while we are reading it.
     }
 }
-
-
-
 /* USER CODE END 0 */
 
 /**
@@ -102,59 +78,86 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
   SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
+
   /* USER CODE BEGIN 2 */
-  HAL_UART_Receive_IT(&huart1, &rxByte, 1);
-  HAL_UART_Transmit(&huart1, (uint8_t*)"UART READY\r\n", 12, 100);
+  // --- 2. Initialize Game Engine ---
+  Mahjong_Init();
+
+  // Seed Randomness (Uses system uptime)
+  srand(HAL_GetTick());
+
+  HAL_UART_Transmit(&huart1, (uint8_t*)"UART READY (BINARY MODE)\r\n", 26, 100);
+
+  // Start listening for the first 3-byte command
+  HAL_UART_Receive_IT(&huart1, rx_packet, 3);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
-	  if (cmdReady)
+      // --- 3. Check if Packet Arrived ---
+	  if (packet_ready)
 	  {
-	      cmdReady = 0;
+	      packet_ready = 0; // Clear flag
 
-	      if (strcmp(rxBuf, "PING") == 0)
-	      {
-	          HAL_UART_Transmit(&huart1, (uint8_t*)"\r\nPONG\r\n", 8, 100);
-	      }
-	      else
-	      {
-	          HAL_UART_Transmit(&huart1, (uint8_t*)"\r\nERR\r\n", 7, 100);
-	      }
+          uint8_t cmd = rx_packet[0];
+          uint8_t data_byte = rx_packet[1];
+          uint8_t received_crc = rx_packet[2];
+
+          // A. Verify CRC (CMD ^ DATA)
+          if ((cmd ^ data_byte) == received_crc)
+          {
+              if (cmd == CMD_START) // 0x01
+              {
+                  // Toggle LED to show activity
+                  HAL_GPIO_TogglePin(G_LED_GPIO_Port, G_LED_Pin);
+
+                  // B. Generate Layout
+                  Mahjong_Generate_New_Layout();
+
+                  // C. Prepare Response
+                  tx_packet[0] = CMD_START; // Echo CMD
+
+                  // Get pointer to the board and copy to TX buffer
+                  uint8_t* game_ptr = Mahjong_Get_Board_State();
+                  memcpy(&tx_packet[1], game_ptr, TOTAL_PIECES);
+
+                  // Calculate Response CRC (XOR of all previous 51 bytes)
+                  tx_packet[51] = Calc_CRC(tx_packet, 51);
+
+                  // D. Send Response (52 bytes)
+                  HAL_UART_Transmit(&huart1, tx_packet, 52, 100);
+              }
+          }
+          else
+          {
+              // Optional: Send Error (NACK) if CRC fails
+              // uint8_t err[] = {0xFF, 0xFF, 0xFF};
+              // HAL_UART_Transmit(&huart1, err, 3, 100);
+          }
+
+          // Restart Listening for the next 3 bytes
+          HAL_UART_Receive_IT(&huart1, rx_packet, 3);
 	  }
+    /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
 
+// ... [Rest of your SystemClock_Config and MX functions remain unchanged] ...
 /**
+ * TEST CLOCK
   * @brief System Clock Configuration
   * @retval None
   */
@@ -206,14 +209,6 @@ void SystemClock_Config(void)
   */
 static void MX_USART1_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART1_Init 0 */
-
-  /* USER CODE END USART1_Init 0 */
-
-  /* USER CODE BEGIN USART1_Init 1 */
-
-  /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
   huart1.Init.BaudRate = 115200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
@@ -228,10 +223,6 @@ static void MX_USART1_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART1_Init 2 */
-
-  /* USER CODE END USART1_Init 2 */
-
 }
 
 /**
@@ -242,9 +233,6 @@ static void MX_USART1_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
-
-  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -259,15 +247,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(G_LED_GPIO_Port, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-  /* USER CODE END MX_GPIO_Init_2 */
 }
-
-/* USER CODE BEGIN 4 */
-
-/* USER CODE END 4 */
 
 /**
   * @brief  This function is executed in case of error occurrence.
@@ -275,27 +255,23 @@ static void MX_GPIO_Init(void)
   */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
-#ifdef USE_FULL_ASSERT
+
+#ifdef  USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
+  * where the assert_param error has occurred.
   * @param  file: pointer to the source file name
   * @param  line: assert_param error line source number
   * @retval None
   */
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
      ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
