@@ -1,4 +1,4 @@
-/* mahjong.c */
+/* level_generation.c */
 #include "mahjong.h"
 #include <stdlib.h>
 #include <string.h>
@@ -21,20 +21,22 @@ static uint8_t board_state[TOTAL_PIECES];
 static void add_tiles(uint8_t *index, uint8_t group, int start_val, int count, int copies) {
     for (int v = 0; v < count; v++) {
         for (int c = 0; c < copies; c++) {
-            board_state[(*index)++] = PACK_TILE(group, start_val + v);
+            // Safety check to prevent overflow
+            if (*index < TOTAL_PIECES) {
+                board_state[(*index)++] = PACK_TILE(group, start_val + v);
+            }
         }
     }
 }
 
 // --- Public Function Implementations ---
-
 void Mahjong_Init(void) {
-    // Any one-time setup (like clearing memory) goes here
     memset(board_state, 0, TOTAL_PIECES);
 }
 
 void Mahjong_Generate_New_Layout(void) {
-    int idx = 0;
+    // FIX: Must be uint8_t to match the add_tiles pointer type
+    uint8_t idx = 0;
 
     // 1. Fill Deck
     add_tiles(&idx, GRP_BAMBOO, 1, 6, 4);
