@@ -1,9 +1,4 @@
-/*
- * command_list.c
- *
- *  Created on: 17 лют. 2026 р.
- *      Author: home
- */
+// -- Command list for mahjong-game
 /*
  *  #define CMD_START 0x01
 	#define CMD_RESET 0x02
@@ -14,25 +9,67 @@
 #include "mahjong.h"
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 
-
-void get_state()
-{
-
-}
-void cmd_reset()
-{
-
-}
-
-void cmd_shuffle()
-{
-
-}
+#define max_shuffles 5
+static uint8_t shuffle_count = 0;
 
 // Internal state to remember the first clicked tile
 // -1 indicates no tile is currently selected
 static int8_t active_selection = -1;
+
+void get_state(){
+	//soon
+}
+void cmd_reset(void){
+	active_selection = -1; // Removing the tile selection
+	shuffle_count = 0;     // Reseting the counter for a new game
+
+	// Generating new layout
+	Mahjong_Init();
+	Mahjong_Generate_New_Layout();
+}
+
+uint8_t cmd_shuffle(){
+		// Checking for shuffle limit(max is 5)
+	    if (shuffle_count >= max_shuffles) {
+	        return 0xFF;
+	    }
+
+	    uint8_t* board = Mahjong_Get_Board_State();
+	    uint8_t active_tiles[TOTAL_PIECES];
+	    uint8_t active_indices[TOTAL_PIECES];
+	    int count = 0;
+
+	    // 1. Collecting only those tiles, that not deleted (not 0x00).
+	    for (int i = 0; i < TOTAL_PIECES; i++) {
+	        if (board[i] != 0x00) {
+	            active_tiles[count] = board[i];
+	            active_indices[count] = i;
+	            count++;
+	        }
+	    }
+
+	    // 2. Shuffle the collected values (Fisher-Yates algorithm)
+	    for (int i = count - 1; i > 0; i--) {
+	        int j = rand() % (i + 1);
+	        uint8_t temp = active_tiles[i];
+	        active_tiles[i] = active_tiles[j];
+	        active_tiles[j] = temp;
+	    }
+
+	    // 3. Return the mixed values to their old positions
+	    for (int i = 0; i < count; i++) {
+	        board[active_indices[i]] = active_tiles[i];
+	    }
+
+	    shuffle_count++;
+	    active_selection = -1; // Remove any highlighting so that there are no bugs after changing the values.
+
+	    return 0x00;
+}
+
+
 
 // Helper to check if a tile exists (is not 0x00)
 static int is_tile_valid(uint8_t index) {

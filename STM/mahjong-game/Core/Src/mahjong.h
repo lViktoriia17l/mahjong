@@ -25,6 +25,8 @@ void Mahjong_Generate_New_Layout(void);
 uint8_t* Mahjong_Get_Board_State(void);
 
 // --- Command Logic (Game Controller) ---
+void cmd_reset(void);
+uint8_t cmd_shuffle(void);
 uint8_t cmd_select(uint8_t index);
 uint8_t cmd_match(uint8_t index);
 
