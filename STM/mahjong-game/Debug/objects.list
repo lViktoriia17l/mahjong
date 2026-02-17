@@ -1,4 +1,5 @@
 "./Core/Src/Level_generation.o"
+"./Core/Src/command_list.o"
 "./Core/Src/main.o"
 "./Core/Src/protocol.o"
 "./Core/Src/stm32f0xx_hal_msp.o"
