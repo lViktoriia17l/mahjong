@@ -1,0 +1,4 @@
+../Core/Src/Level_generation.c:21:13:add_tiles	32	static
+../Core/Src/Level_generation.c:31:6:Mahjong_Init	8	static
+../Core/Src/Level_generation.c:36:6:Mahjong_Generate_New_Layout	32	static
+../Core/Src/Level_generation.c:54:10:Mahjong_Get_Board_State	8	static

@@ -23,7 +23,7 @@ static uint8_t calcLogicCRC(uint8_t cmd, uint8_t *data, uint8_t len) {
 
 void Protocol_ReceiveByte(uint8_t byte) {
     if (byte == '\r' || byte == '\n' || byte == ' ') return;
-    
+
     rxBuffer[rxPtr++] = byte;
 
     // Чекаємо команду "01FFFE" (6 символів)
