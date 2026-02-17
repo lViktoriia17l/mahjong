@@ -31,8 +31,3 @@ void cmd_match()
 
 }
 
-
-int main()
-{
-
-}
