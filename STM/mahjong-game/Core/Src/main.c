@@ -94,7 +94,7 @@ int main(void)
   // Seed Randomness (Uses system uptime)
   srand(HAL_GetTick());
 
-  HAL_UART_Transmit(&huart1, (uint8_t*)"UART READY (BINARY MODE)\r\n", 26, 100);
+  //HAL_UART_Transmit(&huart1, (uint8_t*)"UART READY (BINARY MODE)\r\n", 26, 100);
 
   // Start listening for the first 3-byte command
   HAL_UART_Receive_IT(&huart1, rx_packet, 3);
