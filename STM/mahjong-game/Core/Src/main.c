@@ -102,56 +102,100 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-      // --- 3. Check if Packet Arrived ---
-	  if (packet_ready)
-	  {
-	      packet_ready = 0; // Clear flag
+    while (1)
+    {
+        if (packet_ready)
+        {
+            packet_ready = 0;
 
-          uint8_t cmd = rx_packet[0];
-          uint8_t data_byte = rx_packet[1];
-          uint8_t received_crc = rx_packet[2];
+            uint8_t cmd = rx_packet[0];
+            uint8_t data_byte = rx_packet[1];
+            uint8_t received_crc = rx_packet[2];
 
-          // A. Verify CRC (CMD ^ DATA)
-          if ((cmd ^ data_byte) == received_crc)
-          {
-              if (cmd == CMD_START) // 0x01
-              {
-                  // Toggle LED to show activity
-                  HAL_GPIO_TogglePin(G_LED_GPIO_Port, G_LED_Pin);
+            // Check CRC
+            if ((cmd ^ data_byte) == received_crc)
+            {
+                // ------------------------------------------------
+                // COMMAND: START (0x01)
+                // ------------------------------------------------
+                if (cmd == CMD_START)
+                {
+                    Mahjong_Generate_New_Layout(); // Initial Generation
 
-                  // B. Generate Layout
-                  Mahjong_Generate_New_Layout();
+                    tx_packet[0] = CMD_START;
+                    uint8_t* game_ptr = Mahjong_Get_Board_State();
+                    memcpy(&tx_packet[1], game_ptr, TOTAL_PIECES);
+                    tx_packet[51] = Calc_CRC(tx_packet, 51);
+                    HAL_UART_Transmit(&huart1, tx_packet, 52, 100);
+                }
 
-                  // C. Prepare Response
-                  tx_packet[0] = CMD_START; // Echo CMD
+                // ------------------------------------------------
+                // COMMAND: RESET (0x02)
+                // ------------------------------------------------
+                else if (cmd == CMD_RESET)
+                {
+                    cmd_reset(); // Call command_list logic
 
-                  // Get pointer to the board and copy to TX buffer
-                  uint8_t* game_ptr = Mahjong_Get_Board_State();
-                  memcpy(&tx_packet[1], game_ptr, TOTAL_PIECES);
+                    // Send Confirmation: [CMD] [0x00] [CRC]
+                    tx_packet[0] = CMD_RESET;
+                    tx_packet[1] = 0x00; // OK
+                    tx_packet[2] = Calc_CRC(tx_packet, 2);
+                    HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
+                }
 
-                  // Calculate Response CRC (XOR of all previous 51 bytes)
-                  tx_packet[51] = Calc_CRC(tx_packet, 51);
+                // ------------------------------------------------
+                // COMMAND: SHUFFLE (0x03)
+                // ------------------------------------------------
+                else if (cmd == CMD_SHUFFLE)
+                {
+                    uint8_t status = cmd_shuffle(); // Returns 0x00 (OK) or 0xFF (Limit)
 
-                  // D. Send Response (52 bytes)
-                  HAL_UART_Transmit(&huart1, tx_packet, 52, 100);
-              }
-          }
-          else
-          {
-              // Optional: Send Error (NACK) if CRC fails
-              // uint8_t err[] = {0xFF, 0xFF, 0xFF};
-              // HAL_UART_Transmit(&huart1, err, 3, 100);
-          }
+                    if (status == 0x00) {
+                        // Send New Board State (52 bytes)
+                        tx_packet[0] = CMD_SHUFFLE;
+                        uint8_t* game_ptr = Mahjong_Get_Board_State();
+                        memcpy(&tx_packet[1], game_ptr, TOTAL_PIECES);
+                        tx_packet[51] = Calc_CRC(tx_packet, 51);
+                        HAL_UART_Transmit(&huart1, tx_packet, 52, 100);
+                    } else {
+                        // Send Error: [CMD] [0xFF] [CRC]
+                        tx_packet[0] = CMD_SHUFFLE;
+                        tx_packet[1] = 0xFF;
+                        tx_packet[2] = Calc_CRC(tx_packet, 2);
+                        HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
+                    }
+                }
 
-          // Restart Listening for the next 3 bytes
-          HAL_UART_Receive_IT(&huart1, rx_packet, 3);
-	  }
-    /* USER CODE END WHILE */
+                // ------------------------------------------------
+                // COMMAND: SELECT (0x04)
+                // ------------------------------------------------
+                else if (cmd == CMD_SELECT)
+                {
+                    uint8_t status = cmd_select(data_byte);
 
-    /* USER CODE BEGIN 3 */
-  }
+                    tx_packet[0] = CMD_SELECT;
+                    tx_packet[1] = status; // 0x00 OK, 0xFF Error
+                    tx_packet[2] = Calc_CRC(tx_packet, 2);
+                    HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
+                }
+
+                // ------------------------------------------------
+                // COMMAND: MATCH (0x05)
+                // ------------------------------------------------
+                else if (cmd == CMD_MATCH)
+                {
+                    uint8_t result = cmd_match(data_byte);
+
+                    tx_packet[0] = CMD_MATCH;
+                    tx_packet[1] = result; // 0x01 Match, 0x00 Fail
+                    tx_packet[2] = Calc_CRC(tx_packet, 2);
+                    HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
+                }
+            }
+            // Resume Listening
+            HAL_UART_Receive_IT(&huart1, rx_packet, 3);
+        }
+    }
   /* USER CODE END 3 */
 }
 
