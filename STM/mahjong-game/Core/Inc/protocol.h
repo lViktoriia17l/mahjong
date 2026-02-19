@@ -10,6 +10,7 @@
 #define CMD_SELECT    0x04
 #define CMD_MATCH     0x05
 #define CMD_GET_STATE 0x06
+#define CMD_GIVE_UP 0x07
 
 void Protocol_Init(void);
 void Protocol_Process(void);

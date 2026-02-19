@@ -1,3 +1,4 @@
+
 /*---------------------------- mahjong-game build 2 --------------------------*/
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -22,6 +23,7 @@
 #define CMD_SELECT 0x04
 #define CMD_MATCH 0x05
 #define CMD_GET_STATE 0x06
+#define CMD_GIVE_UP 0x07
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -190,6 +192,19 @@ int main(void)
                     tx_packet[1] = result; // 0x01 Match, 0x00 Fail
                     tx_packet[2] = Calc_CRC(tx_packet, 2);
                     HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
+                }
+                // ------------------------------------------------
+                // COMMAND: GIVE UP (0x07)
+                // ------------------------------------------------
+                else if (cmd == CMD_GIVE_UP)
+                {
+                	cmd_give_up();
+                    tx_packet[0] = CMD_GIVE_UP;
+                    tx_packet[1] = 0x07;
+                    tx_packet[2] = Calc_CRC(tx_packet, 2);
+                    HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
+
+                    cmd_reset();
                 }
             }
             // Resume Listening

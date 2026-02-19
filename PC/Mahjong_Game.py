@@ -9,6 +9,7 @@ CMD_RESET = 0x02
 CMD_SHUFFLE = 0x03
 CMD_SELECT = 0x04
 CMD_MATCH = 0x05
+CMD_GIVE_UP = 0x07
 
 PACKET_SIZE = 52
 TILE_W = 50
@@ -110,6 +111,10 @@ class GameInterface(tk.Frame):
         tk.Button(toolbar, text="🔀 Shuffle", command=self.send_shuffle_command, bg="#2196F3", fg="white").pack(
             side=tk.LEFT, padx=5)
 
+
+        tk.Button(toolbar, text="🏳 Give Up", command=self.send_giveup_command,
+                  bg="#607D8B", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
+
         self.canvas = tk.Canvas(self, bg="#333333")
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<Button-1>", self.on_canvas_click)
@@ -160,6 +165,29 @@ class GameInterface(tk.Frame):
             self.send_start_command()
         else:
             self.log("Reset Failed (STM32 rejected or invalid response).")
+
+    def send_giveup_command(self):
+        if not self.controller.uart.is_open: return
+        self.log("Giving up... returning to menu.")
+        self.controller.uart.reset_buffer()
+
+        # Відправляємо команду 0x07
+        if not self.controller.uart.send_packet(CMD_GIVE_UP, 0x00):
+            self.controller.trigger_auto_reconnect()
+            return
+
+        # Чекаємо підтвердження [0x07, 0x00, CRC]
+        resp = self.controller.uart.read_bytes(3)
+        if resp and len(resp) == 3 and resp[1] == 0x07:
+            # Очищуємо стан гри на ПК
+            self.canvas.delete("all")
+            self.current_board_data = None
+            self.selected_index = None
+
+            # Повертаємось у головне меню
+            self.controller.show_menu()
+        else:
+            self.log("Give Up failed: No response from STM32.")
 
     def send_start_command(self):
         if not self.controller.uart.is_open: return

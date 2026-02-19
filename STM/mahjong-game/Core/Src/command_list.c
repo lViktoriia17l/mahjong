@@ -95,6 +95,9 @@ void cmd_reset(void) {
     Mahjong_Generate_New_Layout();
 }
 
+void cmd_give_up(void) {
+    cmd_reset();
+}
 uint8_t cmd_shuffle(void) {
     if (shuffle_count >= MAX_SHUFFLES) return 0xFF;
 
