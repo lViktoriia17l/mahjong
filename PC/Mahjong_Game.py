@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+import time
 from UART_handler import UARTHandler
 
 # --- CONFIGURATION ---
@@ -33,7 +34,6 @@ class MainMenu(tk.Frame):
         tk.Label(self, text="STM32 Mahjong Console", font=("Arial", 28, "bold"), bg="#f0f0f0", fg="#333").pack(pady=(100, 10))
         tk.Label(self, text="Select your device port to begin", font=("Arial", 12), bg="#f0f0f0", fg="#666").pack(pady=(0, 30))
 
-        # Status Label for Reconnection info
         self.lbl_status = tk.Label(self, text="Ready", font=("Arial", 10, "italic"), bg="#f0f0f0", fg="black")
         self.lbl_status.pack(pady=(0, 20))
 
@@ -58,7 +58,6 @@ class MainMenu(tk.Frame):
         ports = UARTHandler.list_available_ports()
         self.combo_ports['values'] = ports
         if ports: 
-            # Only auto-select if a port isn't already chosen
             if not self.port_var.get() in ports:
                 self.combo_ports.current(0)
         else: 
@@ -70,7 +69,6 @@ class MainMenu(tk.Frame):
             messagebox.showwarning("Error", "Please select a valid COM port.")
             return
 
-        # Cancel any active auto-reconnect loops if the user manually tries to connect
         self.controller.cancel_auto_reconnect()
         self.lbl_status.config(text="Connecting...", fg="black")
 
@@ -93,6 +91,7 @@ class GameInterface(tk.Frame):
         self.current_board_data = None
         self.hitboxes = []
         self.selected_index = None
+        self.error_tiles = [] # Tracks tiles that should blink red
 
         toolbar = tk.Frame(self, bg="#ddd", pady=10)
         toolbar.pack(fill=tk.X)
@@ -105,30 +104,52 @@ class GameInterface(tk.Frame):
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<Button-1>", self.on_canvas_click)
 
+    # --- CONSOLE LOGGER ---
+    def log(self, msg):
+        timestamp = time.strftime('%H:%M:%S')
+        print(f"[Game] {timestamp} - {msg}")
+
+    # --- BLINK LOGIC ---
+    def show_error_blink(self, indices):
+        """Makes specific tiles blink red briefly."""
+        self.error_tiles = indices
+        self.draw_pyramid(self.current_board_data)
+        self.after(400, self.clear_error_blink) # Clear after 400ms
+
+    def clear_error_blink(self):
+        """Removes the red error highlight."""
+        self.error_tiles = []
+        if self.current_board_data:
+            self.draw_pyramid(self.current_board_data)
+
     def disconnect(self):
+        self.log("Disconnected from STM32.")
         self.controller.uart.close_port()
         self.controller.show_menu()
         self.canvas.delete("all")
         self.current_board_data = None
 
-    # --- GAME LOGIC WITH DISCONNECT DETECTION ---
+    # --- GAME LOGIC ---
     def send_start_command(self):
         if not self.controller.uart.is_open: return
+        self.log("Requesting New Game Layout...")
         self.controller.uart.reset_buffer()
         
         if not self.controller.uart.send_packet(CMD_START, 0x00):
             self.controller.trigger_auto_reconnect(); return
             
         response = self.controller.uart.read_bytes(PACKET_SIZE)
-        if response is None: # Detected timeout or disconnect
+        if response is None: 
             self.controller.trigger_auto_reconnect(); return
             
         if len(response) == PACKET_SIZE:
+            self.log("New Game Generated Successfully!")
             self.selected_index = None
             self.draw_pyramid(response[1:51])
     
     def send_shuffle_command(self):
         if not self.controller.uart.is_open: return
+        self.log("Requesting Board Shuffle...")
         self.controller.uart.reset_buffer()
         
         if not self.controller.uart.send_packet(CMD_SHUFFLE, 0x00):
@@ -141,8 +162,10 @@ class GameInterface(tk.Frame):
         if len(header) < 3: return
         
         if header[1] == 0xFF:
+            self.log("SHUFFLE REJECTED: Max limit reached.")
             messagebox.showwarning("Shuffle", "Max shuffle limit reached!")
         else:
+            self.log("SHUFFLE APPROVED! Processing new layout.")
             rest = self.controller.uart.read_bytes(49)
             if rest is None:
                 self.controller.trigger_auto_reconnect(); return
@@ -166,12 +189,14 @@ class GameInterface(tk.Frame):
             self.send_select_command(clicked_idx)
         else:
             if clicked_idx == self.selected_index:
+                self.log(f"Deselected Tile {self.selected_index}.")
                 self.selected_index = None
                 self.draw_pyramid(self.current_board_data)
             else:
                 self.send_match_command(clicked_idx)
 
     def send_select_command(self, index):
+        self.log(f"Attempting to select Tile {index}...")
         self.controller.uart.reset_buffer()
         
         if not self.controller.uart.send_packet(CMD_SELECT, index):
@@ -182,10 +207,15 @@ class GameInterface(tk.Frame):
             self.controller.trigger_auto_reconnect(); return
             
         if len(resp) == 3 and resp[1] == 0x00:
+            self.log(f"SUCCESS: Tile {index} is exposed and selected.")
             self.selected_index = index
             self.draw_pyramid(self.current_board_data)
+        else:
+            self.log(f"REJECTED: Tile {index} is blocked.")
+            self.show_error_blink([index])
 
     def send_match_command(self, index):
+        self.log(f"Attempting to match Tile {self.selected_index} with Tile {index}...")
         self.controller.uart.reset_buffer()
         
         if not self.controller.uart.send_packet(CMD_MATCH, index):
@@ -196,15 +226,25 @@ class GameInterface(tk.Frame):
             self.controller.trigger_auto_reconnect(); return
             
         if len(resp) == 3 and resp[1] == 0x01:
+            self.log(f"MATCH SUCCESS! Tiles {self.selected_index} and {index} removed.")
             board_arr = bytearray(self.current_board_data)
             board_arr[self.selected_index] = 0x00
             board_arr[index] = 0x00
             self.current_board_data = bytes(board_arr)
+            
             self.selected_index = None
             self.draw_pyramid(self.current_board_data)
         else:
+            self.log("MATCH FAILED: Tiles do not match or target is blocked.")
+            
+            # 1. Save the first tile's index
+            old_selection = self.selected_index
+            
+            # 2. CLEAR the active selection so the Cyan color goes away
             self.selected_index = None
-            self.draw_pyramid(self.current_board_data)
+            
+            # 3. Trigger the Red Blink on BOTH the old tile and the new clicked tile
+            self.show_error_blink([old_selection, index])
 
     def draw_pyramid(self, data):
         self.canvas.delete("all")
@@ -234,10 +274,17 @@ class GameInterface(tk.Frame):
 
             self.hitboxes.append((x, y, x+TILE_W, y+TILE_H, index))
 
+            # --- DYNAMIC HIGHLIGHT COLORS (UPDATED) ---
             border_color = "black"
             border_width = 1
-            if index == self.selected_index:
-                border_color = "#FF0000"
+            
+            # Rule 1: Priority goes to Errors (Red)
+            if index in self.error_tiles:
+                border_color = "#FF0000" # Red
+                border_width = 3
+            # Rule 2: Then check for Valid Selections (Cyan)
+            elif index == self.selected_index:
+                border_color = "#00FFFF" # Cyan
                 border_width = 3
 
             self.canvas.create_rectangle(x + SHADOW_OFFSET, y + SHADOW_OFFSET, x + TILE_W + SHADOW_OFFSET, y + TILE_H + SHADOW_OFFSET, fill="#1a1a1a", outline="")
@@ -263,8 +310,6 @@ class MahjongApp(tk.Tk):
         self.geometry("900x750")
         
         self.uart = UARTHandler()
-        
-        # Reconnection State
         self.is_reconnecting = False
         self.reconnect_port = ""
         
@@ -286,29 +331,20 @@ class MahjongApp(tk.Tk):
         self.game_view.pack(fill="both", expand=True)
         self.after(200, self.game_view.send_start_command)
 
-    # --- AUTO RECONNECT LOGIC ---
     def trigger_auto_reconnect(self):
-        """Fired when GameInterface detects a timeout or physical disconnection."""
         if self.is_reconnecting: return
         self.is_reconnecting = True
         self.reconnect_port = self.uart.port_name
         self.uart.close_port()
         
-        # Switch to menu and update UI
         self.show_menu()
         self.menu_view.lbl_status.config(text=f"Connection lost! Auto-reconnecting to {self.reconnect_port}...", fg="red")
-        
-        # This blocking popup prevents the auto-loop from starting until the user reads the message
         messagebox.showwarning("Connection Lost", f"No response from STM32 on {self.reconnect_port}.\n\nPlease ensure it is plugged in.\nThe app will attempt to automatically reconnect.")
-        
-        # Begin the background retry loop
         self.attempt_reconnect()
 
     def attempt_reconnect(self):
-        """Background loop that executes every 2 seconds until successful."""
         if not self.is_reconnecting: return
         
-        # Update the UI dropdown to reflect available ports
         self.menu_view.refresh_ports()
         ports = self.menu_view.combo_ports['values']
         
@@ -317,23 +353,18 @@ class MahjongApp(tk.Tk):
             if self.uart.open_port():
                 self.uart.dtr_reset()
                 self.is_reconnecting = False
-                
-                # Success -> Reset UI and go back to game
                 self.menu_view.lbl_status.config(text="Ready", fg="black")
                 messagebox.showinfo("Reconnected", "Successfully reconnected to STM32!")
                 self.show_game()
                 return
         
-        # Animate the label to show it's actively trying
         current_text = self.menu_view.lbl_status.cget("text")
         new_text = current_text + "." if len(current_text) < 65 else f"Auto-reconnecting to {self.reconnect_port}."
         self.menu_view.lbl_status.config(text=new_text)
         
-        # Schedule next attempt in 2 seconds
         self.after(2000, self.attempt_reconnect)
 
     def cancel_auto_reconnect(self):
-        """Allows user to cancel the loop by manually interacting with the menu."""
         self.is_reconnecting = False
 
 
