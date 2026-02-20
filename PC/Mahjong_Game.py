@@ -4,7 +4,12 @@ import time
 from UART_handler import UARTHandler
 
 # --- КОНФІГУРАЦІЯ ---
-CMD_START, CMD_RESET, CMD_SHUFFLE, CMD_SELECT, CMD_MATCH, CMD_GIVE_UP = 0x01, 0x02, 0x03, 0x04, 0x05, 0x07
+CMD_START = 0x01
+CMD_RESET = 0x02
+CMD_SHUFFLE = 0x03
+CMD_SELECT = 0x04
+CMD_MATCH = 0x05
+CMD_GIVE_UP = 0x07
 PACKET_SIZE = 52 # 50 тайлів + 1 байт CMD + 1 байт CRC
 TILE_W, TILE_H, SHADOW_OFFSET = 50, 65, 4
 
@@ -118,15 +123,44 @@ class GameInterface(tk.Frame):
     def send_shuffle_command(self):
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_SHUFFLE, 0x00):
-            self.handle_error(self.send_shuffle_command); return
+            self.handle_error(self.send_shuffle_command)
+            return
         
-        resp = self.controller.uart.read_packet_strictly(PACKET_SIZE)
-        if resp:
-            if resp[0] == 0xFF:
-                messagebox.showwarning("Shuffle", "Limit reached!")
-            else:
-                self.selected_index = None
-                self.draw_pyramid(resp[1:])
+        # --- THE FIX: DYNAMIC PACKET READING ---
+        # 1. Спершу читаємо 3 байти
+        try:
+            header = self.controller.uart.ser.read(3)
+        except Exception:
+            self.handle_error(self.send_shuffle_command)
+            return
+
+        if len(header) == 3:
+            # Якщо другий байт 0xFF - це відмова (ліміт вичерпано)
+            if header[1] == 0xFF: 
+                # Перевіряємо CRC пакету помилки
+                if self.controller.uart._calculate_crc(header[:2]) == header[2]:
+                    messagebox.showwarning("Shuffle", "Limit reached!")
+                else:
+                    self.handle_error(self.send_shuffle_command)
+            
+            # Якщо пакет успішний (52 байти)
+            else: 
+                try:
+                    rest = self.controller.uart.ser.read(49) # Дочитуємо решту масиву
+                except Exception:
+                    self.handle_error(self.send_shuffle_command)
+                    return
+                
+                if len(rest) == 49:
+                    full_packet = header + rest
+                    # Перевіряємо CRC на всьому 52-байтному пакеті
+                    if self.controller.uart._calculate_crc(full_packet[:-1]) == full_packet[-1]:
+                        self.selected_index = None
+                        self.draw_pyramid(full_packet[1:-1]) # Extract the 50 board bytes
+                    else:
+                        self.handle_error(self.send_shuffle_command)
+                else:
+                    self.handle_error(self.send_shuffle_command)
         else:
             self.handle_error(self.send_shuffle_command)
 
