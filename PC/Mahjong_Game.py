@@ -61,12 +61,16 @@ class GameInterface(tk.Frame):
         self.hitboxes = []
         self.selected_index = None
         self.error_tiles = []
+        self.shuffles_left = 5
 
         toolbar = tk.Frame(self, bg="#ddd", pady=10)
         toolbar.pack(fill=tk.X)
         tk.Button(toolbar, text="← Exit", command=self.exit_to_menu).pack(side=tk.LEFT, padx=10)
         tk.Button(toolbar, text="🔄 Reset", command=self.send_reset_command, bg="#f44336", fg="white").pack(side=tk.LEFT, padx=10)
-        tk.Button(toolbar, text="🔀 Shuffle", command=self.send_shuffle_command, bg="#2196F3", fg="white").pack(side=tk.LEFT, padx=5)
+        self.btn_shuffle = tk.Button(toolbar, text="🔀 Shuffle", command=self.send_shuffle_command, bg="#2196F3", fg="white")
+        self.btn_shuffle.pack(side=tk.LEFT, padx=5)
+        self.lbl_shuffles = tk.Label(toolbar, text=f"Спроб: {self.shuffles_left}", font=("Arial", 10, "bold"), bg="#ddd")
+        self.lbl_shuffles.pack(side=tk.LEFT, padx=15)
         tk.Button(toolbar, text="🏳 Give Up", command=self.send_giveup_command, bg="#607D8B", fg="white").pack(side=tk.LEFT, padx=10)
 
         self.canvas = tk.Canvas(self, bg="#333333")
@@ -116,9 +120,21 @@ class GameInterface(tk.Frame):
         resp = self.controller.uart.read_packet_strictly(PACKET_SIZE)
         if resp:
             self.selected_index = None
+            self.update_shuffle_counter(5)
             self.draw_pyramid(resp[1:]) # Дані після байта CMD
         else:
             self.handle_error(self.send_start_command)
+
+    def update_shuffle_counter(self, count):
+        self.shuffles_left = count
+        self.lbl_shuffles.config(text=f"Attemps: {count}")
+        
+        if self.shuffles_left <= 0:
+            self.lbl_shuffles.config(fg="red")
+            self.btn_shuffle.config(state="disabled") # Кнопка стане сірою
+        else:
+            self.lbl_shuffles.config(fg="black")
+            self.btn_shuffle.config(state="normal") # Кнопка активна
 
     def send_shuffle_command(self):
         self.controller.uart.reset_buffer()
@@ -140,6 +156,7 @@ class GameInterface(tk.Frame):
                 # Перевіряємо CRC пакету помилки
                 if self.controller.uart._calculate_crc(header[:2]) == header[2]:
                     messagebox.showwarning("Shuffle", "Limit reached!")
+                    self.update_shuffle_counter(0)
                 else:
                     self.handle_error(self.send_shuffle_command)
             
@@ -155,6 +172,10 @@ class GameInterface(tk.Frame):
                     full_packet = header + rest
                     # Перевіряємо CRC на всьому 52-байтному пакеті
                     if self.controller.uart._calculate_crc(full_packet[:-1]) == full_packet[-1]:
+                        new_count = self.shuffles_left - 1
+                        if new_count < 0:
+                            new_count = 0
+                        self.update_shuffle_counter(new_count)
                         self.selected_index = None
                         self.draw_pyramid(full_packet[1:-1]) # Extract the 50 board bytes
                     else:
