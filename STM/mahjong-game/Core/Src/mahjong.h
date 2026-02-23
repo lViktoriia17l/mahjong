@@ -15,6 +15,7 @@
 #define CMD_MATCH     0x05
 #define CMD_GET_STATE 0x06
 #define CMD_GIVE_UP   0x07
+#define CMD_HINT 0x08
 // Tile Groups
 #define GRP_FLOWERS   0b101
 #define GRP_SEASONS   0b110
@@ -29,6 +30,7 @@ void cmd_reset(void);
 uint8_t cmd_shuffle(void);
 uint8_t cmd_select(uint8_t index);
 uint8_t cmd_match(uint8_t index);
+uint8_t cmd_hint(uint8_t *idx1, uint8_t *idx2);
 void cmd_give_up(void);
 
 #endif

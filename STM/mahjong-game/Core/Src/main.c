@@ -24,6 +24,7 @@
 #define CMD_MATCH 0x05
 #define CMD_GET_STATE 0x06
 #define CMD_GIVE_UP 0x07
+#define CMD_HINT 0x08
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -206,6 +207,25 @@ int main(void)
 
                     cmd_reset();
                 }
+
+                else if (cmd == CMD_HINT)
+                        {
+                            uint8_t i1 = 0, i2 = 0;
+                            tx_packet[0] = CMD_HINT; // 0x08
+
+                            if (cmd_hint(&i1, &i2) == 1) {
+                                // Якщо знайшли - записуємо їхні реальні індекси (0-49)
+                                tx_packet[1] = i1;
+                                tx_packet[2] = i2;
+                            } else {
+                                // Якщо не знайшли - записуємо маркер 100
+                                tx_packet[1] = 100;
+                                tx_packet[2] = 100;
+                            }
+
+                            tx_packet[3] = tx_packet[0] ^ tx_packet[1] ^ tx_packet[2]; // CRC
+                            HAL_UART_Transmit(&huart1, tx_packet, 4, 100);
+                        }
             }
             // Resume Listening
             HAL_UART_Receive_IT(&huart1, rx_packet, 3);
