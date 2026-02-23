@@ -73,6 +73,18 @@ class UARTHandler:
             self.is_open = False
             return None
 
+    def read_bytes(self, count):
+        """Читає рівно 'count' байтів. Повертає bytes або None при помилці."""
+        if not self.is_connected():
+            return None
+        try:
+            data = self.ser.read(count)
+            if len(data) == count:
+                return data
+            return None
+        except (serial.SerialException, AttributeError):
+            self.is_open = False
+            return False
     def reset_buffer(self):
         if self.is_connected():
             try:

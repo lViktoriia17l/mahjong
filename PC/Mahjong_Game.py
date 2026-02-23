@@ -10,6 +10,7 @@ CMD_SHUFFLE = 0x03
 CMD_SELECT = 0x04
 CMD_MATCH = 0x05
 CMD_GIVE_UP = 0x07
+CMD_HINT = 0x08
 PACKET_SIZE = 52 # 50 тайлів + 1 байт CMD + 1 байт CRC
 TILE_W, TILE_H, SHADOW_OFFSET = 50, 65, 4
 
@@ -62,6 +63,7 @@ class GameInterface(tk.Frame):
         self.selected_index = None
         self.error_tiles = []
         self.shuffles_left = 5
+        self.hint_tiles = []
 
         toolbar = tk.Frame(self, bg="#ddd", pady=10)
         toolbar.pack(fill=tk.X)
@@ -72,6 +74,9 @@ class GameInterface(tk.Frame):
         self.lbl_shuffles = tk.Label(toolbar, text=f"Спроб: {self.shuffles_left}", font=("Arial", 10, "bold"), bg="#ddd")
         self.lbl_shuffles.pack(side=tk.LEFT, padx=15)
         tk.Button(toolbar, text="🏳 Give Up", command=self.send_giveup_command, bg="#607D8B", fg="white").pack(side=tk.LEFT, padx=10)
+
+        tk.Button(toolbar, text="💡 Hint", command=self.request_hint, bg="#FFEB3B", fg="black").pack(side=tk.LEFT,
+                                                                                                    padx=10)
 
         self.canvas = tk.Canvas(self, bg="#333333")
         self.canvas.pack(fill=tk.BOTH, expand=True)
@@ -279,6 +284,7 @@ class GameInterface(tk.Frame):
             border, b_w = ("black", 1)
             if idx == self.selected_index: border, b_w = "cyan", 3
             if idx in self.error_tiles: border, b_w = "red", 3
+            if idx in self.hint_tiles: border, b_w = "yellow", 4
 
             self.canvas.create_rectangle(x+4, y+4, x+TILE_W+4, y+TILE_H+4, fill="#1a1a1a", outline="")
             self.canvas.create_rectangle(x, y, x+TILE_W, y+TILE_H, fill="#f0f0f0", outline=border, width=b_w)
@@ -294,6 +300,33 @@ class GameInterface(tk.Frame):
         for r in range(3):
             for c in range(3): draw_tile(i, c, r, 2, 1, 1); i += 1
 
+    def request_hint(self):
+        if not self.controller.uart.is_open: return
+        self.controller.uart.reset_buffer()
+
+        if not self.controller.uart.send_packet(CMD_HINT, 0x00):
+            self.handle_error(self.request_hint);
+            return
+
+        ans = self.controller.uart.read_bytes(4)
+        if ans and ans[0] == CMD_HINT:
+            idx1, idx2 = ans[1], ans[2]
+            if idx1 == 100:
+                messagebox.showinfo("Hint", "Більше немає доступних пар!")
+            else:
+                self.show_hint_blink([idx1, idx2])
+        else:
+            self.handle_error(self.request_hint)
+
+    def show_hint_blink(self, indices):
+        self.hint_tiles = indices
+        self.draw_pyramid(self.current_board_data)
+        self.after(1500, self.clear_hint_blink)
+
+    def clear_hint_blink(self):
+        self.hint_tiles = []
+        if self.current_board_data:
+            self.draw_pyramid(self.current_board_data)
 # --- ДОДАТОК ---
 class MahjongApp(tk.Tk):
     def __init__(self):

@@ -170,3 +170,36 @@ uint8_t cmd_match(uint8_t index) {
         return 0x00;
     }
 }
+
+uint8_t cmd_hint(uint8_t *idx1, uint8_t *idx2) {
+    uint8_t* board = Mahjong_Get_Board_State();
+
+    for (int i = 0; i < TOTAL_PIECES; i++) {
+        if (board[i] == 0 || !is_tile_exposed(i)) continue;
+
+        for (int j = i + 1; j < TOTAL_PIECES; j++) {
+            if (board[j] == 0 || !is_tile_exposed(j)) continue;
+
+            uint8_t tile1 = board[i];
+            uint8_t tile2 = board[j];
+
+            // & 0x07 - це математична маска для читання бітів, не звертай уваги
+            uint8_t grp1 = (tile1 >> 5) & 0x07;
+            uint8_t grp2 = (tile2 >> 5) & 0x07;
+
+            // Якщо це Квіти (5) або Сезони (6) - перевіряємо тільки групу
+            if (grp1 == grp2 && (grp1 == 5 || grp1 == 6)) {
+                *idx1 = (uint8_t)i;
+                *idx2 = (uint8_t)j;
+                return 1;
+            }
+            // Для всіх інших - перевіряємо повний збіг плитки
+            else if (tile1 == tile2) {
+                *idx1 = (uint8_t)i;
+                *idx2 = (uint8_t)j;
+                return 1;
+            }
+        }
+    }
+    return 0; // Пар не знайдено
+}
