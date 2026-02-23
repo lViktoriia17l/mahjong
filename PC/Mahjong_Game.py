@@ -75,8 +75,7 @@ class GameInterface(tk.Frame):
         self.lbl_shuffles.pack(side=tk.LEFT, padx=15)
         tk.Button(toolbar, text="🏳 Give Up", command=self.send_giveup_command, bg="#607D8B", fg="white").pack(side=tk.LEFT, padx=10)
 
-        tk.Button(toolbar, text="💡 Hint", command=self.request_hint, bg="#FFEB3B", fg="black").pack(side=tk.LEFT,
-                                                                                                    padx=10)
+        tk.Button(toolbar, text="💡 Hint", command=self.request_hint, bg="#FFEB3B", fg="black").pack(side=tk.LEFT, padx=10)
 
         self.canvas = tk.Canvas(self, bg="#333333")
         self.canvas.pack(fill=tk.BOTH, expand=True)
@@ -107,6 +106,7 @@ class GameInterface(tk.Frame):
 
     # --- КОМАНДИ ---
     def send_reset_command(self):
+        self.log("CMD_RESET sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_RESET, 0x00):
             self.handle_error(self.send_reset_command); return
@@ -118,6 +118,7 @@ class GameInterface(tk.Frame):
             self.handle_error(self.send_reset_command)
 
     def send_start_command(self):
+        self.log("CMD_START sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_START, 0x00):
             self.handle_error(self.send_start_command); return
@@ -142,6 +143,7 @@ class GameInterface(tk.Frame):
             self.btn_shuffle.config(state="normal") # Кнопка активна
 
     def send_shuffle_command(self):
+        self.log("CMD_SHUFFLE sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_SHUFFLE, 0x00):
             self.handle_error(self.send_shuffle_command)
@@ -191,6 +193,7 @@ class GameInterface(tk.Frame):
             self.handle_error(self.send_shuffle_command)
 
     def send_giveup_command(self):
+        self.log("CMD_GIVE_UP sent")
         if not self.controller.uart.send_packet(CMD_GIVE_UP, 0x00):
             self.handle_error(self.send_giveup_command); return
         
@@ -201,6 +204,7 @@ class GameInterface(tk.Frame):
             self.handle_error(self.send_giveup_command)
 
     def send_select_command(self, index):
+        self.log(f"CMD_SELECT sent with index {index}")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_SELECT, index):
             self.handle_error(self.send_select_command, index); return
@@ -216,6 +220,7 @@ class GameInterface(tk.Frame):
             self.handle_error(self.send_select_command, index)
 
     def send_match_command(self, index):
+        self.log(f"CMD_MATCH sent with index {index}")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_MATCH, index):
             self.handle_error(self.send_match_command, index); return
@@ -223,6 +228,7 @@ class GameInterface(tk.Frame):
         resp = self.controller.uart.read_packet_strictly(3)
         if resp:
             if resp[1] == 0x01: # Match Success
+                self.log(f"Tiles at indices {self.selected_index} and {index} matched!")
                 temp_board = bytearray(self.current_board_data)
                 temp_board[self.selected_index] = 0x00
                 temp_board[index] = 0x00
@@ -230,6 +236,7 @@ class GameInterface(tk.Frame):
                 self.selected_index = None
                 self.draw_pyramid(self.current_board_data)
             else:
+                self.log(f"Match failed between indices {self.selected_index} and {index}")
                 old_idx = self.selected_index
                 self.selected_index = None
                 self.show_error_blink([old_idx, index])
@@ -238,6 +245,7 @@ class GameInterface(tk.Frame):
 
     # --- ЛОГІКА ТА ВІЗУАЛ ---
     def on_canvas_click(self, event):
+        self.log(f"Canvas clicked at ({event.x}, {event.y})")
         if not self.current_board_data: return
         clicked_idx = -1
         for hb in reversed(self.hitboxes):
@@ -301,6 +309,7 @@ class GameInterface(tk.Frame):
             for c in range(3): draw_tile(i, c, r, 2, 1, 1); i += 1
 
     def request_hint(self):
+        self.log("CMD_HINT sent")
         if not self.controller.uart.is_open: return
         self.controller.uart.reset_buffer()
 
