@@ -19,6 +19,7 @@ TILE_GROUPS = {
     3: ("Winds", "#BDBDBD"), 4: ("Dragons", "#FFEE58"), 5: ("Flowers", "#AB47BC"), 6: ("Seasons", "#FFA726")
 }
 
+
 # --- ГОЛОВНЕ МЕНЮ ---
 class MainMenu(tk.Frame):
     def __init__(self, parent, controller):
@@ -36,6 +37,8 @@ class MainMenu(tk.Frame):
         
         tk.Button(frame_port, text="↻", command=self.refresh_ports).grid(row=0, column=1)
         tk.Button(self, text="CONNECT & PLAY", command=self.connect, bg="#4CAF50", fg="white", font=("Arial", 14, "bold"), pady=10).pack(pady=40)
+    def log(self, msg):
+        print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
     def refresh_ports(self):
         ports = UARTHandler.list_available_ports()
@@ -45,9 +48,14 @@ class MainMenu(tk.Frame):
 
     def connect(self):
         port = self.port_var.get()
-        if not port or port == "No Ports Found": return
+        if not port or port == "No Ports Found":
+            self.log("No serial ports available")
+            messagebox.showerror("Error", "No serial ports available!")
+            return
+            
         self.controller.uart.port_name = port
         if self.controller.uart.open_port():
+            self.log(f"Connected to {port}")
             self.controller.uart.dtr_reset()
             self.controller.show_game()
         else:
@@ -85,8 +93,10 @@ class GameInterface(tk.Frame):
         print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
     def exit_to_menu(self):
+        self.log("Exiting to menu")
         self.controller.uart.close_port()
         self.controller.show_menu()
+        self.log("Returned to menu")
 
     def handle_error(self, retry_func, *args):
         """Запитує про перепідключення без виходу з гри."""
@@ -100,6 +110,7 @@ class GameInterface(tk.Frame):
                 self.log("Reconnected! Retrying command...")
                 retry_func(*args)
             else:
+                self.log("Reconnection failed. Staying in error state.")
                 self.handle_error(retry_func, *args)
         else: # Натиснуто CANCEL
             self.exit_to_menu()
@@ -109,26 +120,50 @@ class GameInterface(tk.Frame):
         self.log("CMD_RESET sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_RESET, 0x00):
+<<<<<<< Updated upstream
             self.handle_error(self.send_reset_command); return
         
         resp = self.controller.uart.read_packet_strictly(3)
         if resp:
+=======
+            self.log("Failed to send CMD_RESET")
+            self.handle_error(self.send_reset_command)
+            return
+        
+        resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+        if self.validate_response(CMD_RESET, resp, 2)[0]:
+            self.log("CMD_RESET acknowledged - Waiting for board")
+>>>>>>> Stashed changes
             self.after(500, self.send_start_command)
         else:
+            self.log("No response to CMD_RESET")
             self.handle_error(self.send_reset_command)
 
     def send_start_command(self):
         self.log("CMD_START sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_START, 0x00):
+<<<<<<< Updated upstream
             self.handle_error(self.send_start_command); return
         
         resp = self.controller.uart.read_packet_strictly(PACKET_SIZE)
         if resp:
+=======
+            self.log("Failed to send CMD_START")
+            self.handle_error(self.send_start_command)
+            return
+        
+        # Чекаємо 5 секунд на генерацію
+        resp = self.controller.uart.read_packet_strictly(PACKET_SIZE, timeout_sec=10.0)
+        valid, payload = self.validate_response(CMD_START, resp, 51)
+        if valid:
+            self.log("Board received successfully")
+>>>>>>> Stashed changes
             self.selected_index = None
             self.update_shuffle_counter(5)
             self.draw_pyramid(resp[1:]) # Дані після байта CMD
         else:
+            self.log("Failed to receive board after CMD_START")
             self.handle_error(self.send_start_command)
 
     def update_shuffle_counter(self, count):
@@ -146,9 +181,11 @@ class GameInterface(tk.Frame):
         self.log("CMD_SHUFFLE sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_SHUFFLE, 0x00):
+            self.log("Failed to send CMD_SHUFFLE")
             self.handle_error(self.send_shuffle_command)
             return
         
+<<<<<<< Updated upstream
         # --- THE FIX: DYNAMIC PACKET READING ---
         # 1. Спершу читаємо 3 байти
         try:
@@ -202,24 +239,57 @@ class GameInterface(tk.Frame):
             self.exit_to_menu()
         else:
             self.handle_error(self.send_giveup_command)
+=======
+        if resp and len(resp) == 51: # Успіх
+            self.log("Board reshuffled successfully")
+            self.update_shuffle_counter(self.shuffles_left - 1)
+            self.selected_index = None
+            self.draw_pyramid(resp[1:])
+        else:
+            # Якщо дошка не прийшла, можливо це помилка ліміту (0xFF)
+            # Перевіримо буфер на 3-байтову відповідь
+            if resp and len(resp) == 2 and resp[1] == 0xFF:
+                self.log("Shuffle limit reached")
+                messagebox.showwarning("Shuffle", "Limit reached!")
+                self.update_shuffle_counter(0)
+            else:
+                self.log("Failed to receive board after CMD_SHUFFLE")
+                self.handle_error(self.send_shuffle_command)
+>>>>>>> Stashed changes
 
     def send_select_command(self, index):
         self.log(f"CMD_SELECT sent with index {index}")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_SELECT, index):
+<<<<<<< Updated upstream
             self.handle_error(self.send_select_command, index); return
         
         resp = self.controller.uart.read_packet_strictly(3)
         if resp:
             if resp[1] == 0x00: # Select Success
+=======
+            self.log(f"Failed to send CMD_SELECT for index {index}")
+            self.handle_error(self.send_select_command, index)
+            return
+        
+        resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+        valid, payload = self.validate_response(CMD_SELECT, resp, 2)
+        if valid:
+            self.log(f"CMD_SELECT response: {payload[1]:02X}")
+            if payload[1] == 0x00:
+                self.log(f"Tile {index} selected")
+>>>>>>> Stashed changes
                 self.selected_index = index
                 self.draw_pyramid(self.current_board_data)
             else:
+                self.log(f"Tile {index} is not selectable")
                 self.show_error_blink([index])
         else:
+            self.log(f"No response to CMD_SELECT for index {index}")
             self.handle_error(self.send_select_command, index)
 
     def send_match_command(self, index):
+<<<<<<< Updated upstream
         self.log(f"CMD_MATCH sent with index {index}")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_MATCH, index):
@@ -229,6 +299,21 @@ class GameInterface(tk.Frame):
         if resp:
             if resp[1] == 0x01: # Match Success
                 self.log(f"Tiles at indices {self.selected_index} and {index} matched!")
+=======
+        self.log(f"CMD_MATCH sent for index {index}")
+        self.controller.uart.reset_buffer()
+        if not self.controller.uart.send_packet(CMD_MATCH, index):
+            self.log(f"Failed to send CMD_MATCH for index {index}")
+            self.handle_error(self.send_match_command, index)
+            return
+        
+        resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+        valid, payload = self.validate_response(CMD_MATCH, resp, 2)
+        if valid:
+            self.log(f"CMD_MATCH response: {payload[1]:02X}")
+            if payload[1] == 0x01: # Match
+                self.log(f"Tiles {self.selected_index} and {index} matched!")
+>>>>>>> Stashed changes
                 temp_board = bytearray(self.current_board_data)
                 temp_board[self.selected_index] = 0x00
                 temp_board[index] = 0x00
@@ -236,17 +321,72 @@ class GameInterface(tk.Frame):
                 self.selected_index = None
                 self.draw_pyramid(self.current_board_data)
             else:
+<<<<<<< Updated upstream
                 self.log(f"Match failed between indices {self.selected_index} and {index}")
+=======
+                self.log(f"Tiles {self.selected_index} and {index} do not match")
+>>>>>>> Stashed changes
                 old_idx = self.selected_index
                 self.selected_index = None
                 self.show_error_blink([old_idx, index])
         else:
+            self.log(f"No response to CMD_MATCH for index {index}")
             self.handle_error(self.send_match_command, index)
 
+<<<<<<< Updated upstream
     # --- ЛОГІКА ТА ВІЗУАЛ ---
     def on_canvas_click(self, event):
         self.log(f"Canvas clicked at ({event.x}, {event.y})")
         if not self.current_board_data: return
+=======
+    def request_hint(self):
+        self.log("CMD_HINT sent")
+        self.controller.uart.reset_buffer()
+        if not self.controller.uart.send_packet(CMD_HINT, 0x00):
+            self.log("Failed to send CMD_HINT")
+            self.handle_error(self.request_hint)
+            return
+
+        resp = self.controller.uart.read_packet_strictly(4, timeout_sec=1.5)
+        valid, payload = self.validate_response(CMD_HINT, resp, 3)
+        if valid:
+            self.log(f"CMD_HINT response: {payload[1]:02X} {payload[2]:02X}")
+            idx1, idx2 = payload[1], payload[2]
+            if idx1 == 100:
+                self.log("No pairs left for hint")
+                messagebox.showinfo("Hint", "No pairs left!")
+            else:
+                self.log(f"Hint: Tiles {idx1} and {idx2} can be matched")
+                self.show_hint_blink([idx1, idx2])
+        else:
+            self.log("No response to CMD_HINT")
+            self.handle_error(self.request_hint)
+
+    def send_giveup_command(self):
+        self.log("CMD_GIVE_UP sent")
+        self.controller.uart.reset_buffer()
+        if self.controller.uart.send_packet(CMD_GIVE_UP, 0x00):
+            self.log("CMD_GIVE_UP sent successfully, waiting for response...")
+            resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+            if resp: 
+                self.log(f"CMD_GIVE_UP response: {resp[0]:02X} {resp[1]:02X}")
+                self.exit_to_menu()
+        else:
+            self.log("Failed to send CMD_GIVE_UP")
+            self.handle_error(self.send_giveup_command)
+
+    # --- ВІЗУАЛІЗАЦІЯ (БЕЗ ЗМІН) ---
+    def update_shuffle_counter(self, count):
+        self.shuffles_left = max(0, count)
+        self.lbl_shuffles.config(text=f"Attempts: {self.shuffles_left}", fg="red" if self.shuffles_left == 0 else "black")
+        self.btn_shuffle.config(state="disabled" if self.shuffles_left == 0 else "normal")
+
+    def on_canvas_click(self, event):
+        self.log(f"Canvas clicked at ({event.x}, {event.y})")
+        if not self.current_board_data:
+            self.log("No board data available, ignoring click")
+            return
+>>>>>>> Stashed changes
         clicked_idx = -1
         for hb in reversed(self.hitboxes):
             x1, y1, x2, y2, idx = hb
@@ -255,11 +395,14 @@ class GameInterface(tk.Frame):
         if clicked_idx == -1: return
         
         if self.selected_index is None:
+            self.log(f"Tile {clicked_idx} clicked - sending select command")
             self.send_select_command(clicked_idx)
         elif clicked_idx == self.selected_index:
+            self.log(f"Tile {clicked_idx} clicked again - deselecting")
             self.selected_index = None
             self.draw_pyramid(self.current_board_data)
         else:
+            self.log(f"Tile {clicked_idx} clicked - sending match command with selected index {self.selected_index}")
             self.send_match_command(clicked_idx)
 
     def show_error_blink(self, indices):
