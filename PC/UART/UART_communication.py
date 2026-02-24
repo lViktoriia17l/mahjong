@@ -2,7 +2,7 @@ import serial
 import time
 
 PORT = 'COM3'       # Our port
-BAUD = 9600         # Must match the STM32 baud rate
+BAUD = 115200         # Must match the STM32 baud rate
 TIMEOUT = 2         # Seconds to wait for a response
 message = "Hello :)" 
 
