@@ -11,7 +11,7 @@ CMD_SELECT = 0x04
 CMD_MATCH = 0x05
 CMD_GIVE_UP = 0x07
 CMD_HINT = 0x08
-PACKET_SIZE = 52 # 50 тайлів + 1 байт CMD + 1 байт CRC
+PACKET_SIZE = 52  # 50 тайлів + 1 байт CMD + 1 байт CRC
 TILE_W, TILE_H, SHADOW_OFFSET = 50, 65, 4
 
 TILE_GROUPS = {
@@ -26,7 +26,8 @@ class MainMenu(tk.Frame):
         self.controller = controller
         
         tk.Label(self, text="STM32 Mahjong Console", font=("Arial", 28, "bold"), bg="#f0f0f0").pack(pady=(100, 10))
-        self.lbl_status = tk.Label(self, text="Ready", font=("Arial", 10, "italic"), bg="#f0f0f0").pack(pady=(0, 20))
+        self.lbl_status = tk.Label(self, text="Ready", font=("Arial", 10, "italic"), bg="#f0f0f0")
+        self.lbl_status.pack(pady=(0, 20))
 
         frame_port = tk.Frame(self, bg="#f0f0f0")
         frame_port.pack()
@@ -71,10 +72,9 @@ class GameInterface(tk.Frame):
         tk.Button(toolbar, text="🔄 Reset", command=self.send_reset_command, bg="#f44336", fg="white").pack(side=tk.LEFT, padx=10)
         self.btn_shuffle = tk.Button(toolbar, text="🔀 Shuffle", command=self.send_shuffle_command, bg="#2196F3", fg="white")
         self.btn_shuffle.pack(side=tk.LEFT, padx=5)
-        self.lbl_shuffles = tk.Label(toolbar, text=f"Спроб: {self.shuffles_left}", font=("Arial", 10, "bold"), bg="#ddd")
+        self.lbl_shuffles = tk.Label(toolbar, text=f"Attempts: {self.shuffles_left}", font=("Arial", 10, "bold"), bg="#ddd")
         self.lbl_shuffles.pack(side=tk.LEFT, padx=15)
         tk.Button(toolbar, text="🏳 Give Up", command=self.send_giveup_command, bg="#607D8B", fg="white").pack(side=tk.LEFT, padx=10)
-
         tk.Button(toolbar, text="💡 Hint", command=self.request_hint, bg="#FFEB3B", fg="black").pack(side=tk.LEFT, padx=10)
 
         self.canvas = tk.Canvas(self, bg="#333333")
@@ -89,202 +89,110 @@ class GameInterface(tk.Frame):
         self.controller.show_menu()
 
     def handle_error(self, retry_func, *args):
-        """Запитує про перепідключення без виходу з гри."""
         self.log("Communication error! Opening dialog...")
         answer = messagebox.askretrycancel(
             "Connection Lost", 
             "STM32 is not responding. Check the cable and click 'Retry' to continue."
         )
-        if answer: # Натиснуто RETRY
+        if answer:
             if self.controller.uart.reconnect():
-                self.log("Reconnected! Retrying command...")
+                self.log("Reconnected! Retrying...")
                 retry_func(*args)
             else:
                 self.handle_error(retry_func, *args)
-        else: # Натиснуто CANCEL
+        else:
             self.exit_to_menu()
     
     def validate_response(self, cmd_sent, response, expected_size):
-        """Validate that response command matches sent command and has correct size.
-        Returns (is_valid, payload) where payload excludes CRC.
-        """
-        if not response or len(response) < 1:
-            self.log(f"Error: No response received")
+        if not response:
             return False, None
-        
-        cmd_echo = response[0]
-        if cmd_echo != cmd_sent:
-            self.log(f"Error: CMD mismatch. Sent 0x{cmd_sent:02X}, got 0x{cmd_echo:02X}")
+        if response[0] != cmd_sent:
             return False, None
-        
         if len(response) != expected_size:
-            self.log(f"Error: Size mismatch. Expected {expected_size}, got {len(response)}")
             return False, None
-        
         return True, response
 
-    # --- КОМАНДИ ---
+    # --- КОМАНДИ З ТАЙМАУТАМИ ---
     def send_reset_command(self):
-        self.log(f"CMD_RESET (0x{CMD_RESET:02X}) sent")
+        self.log("CMD_RESET sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_RESET, 0x00):
-            self.log(f"Failed to send CMD_RESET")
             self.handle_error(self.send_reset_command)
             return
         
-        resp = self.controller.uart.read_packet_strictly(3)
-        is_valid, payload = self.validate_response(CMD_RESET, resp, 2)
-        if is_valid:
-            self.log(f"CMD_RESET acknowledged")
+        resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+        if self.validate_response(CMD_RESET, resp, 2)[0]:
             self.after(500, self.send_start_command)
         else:
             self.handle_error(self.send_reset_command)
 
     def send_start_command(self):
-        self.log(f"CMD_START (0x{CMD_START:02X}) sent")
+        self.log("CMD_START sent - Waiting for board...")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_START, 0x00):
-            self.log(f"Failed to send CMD_START")
             self.handle_error(self.send_start_command)
             return
         
-        resp = self.controller.uart.read_packet_strictly(PACKET_SIZE)
-        is_valid, payload = self.validate_response(CMD_START, resp, 51)  # 1 CMD + 50 board bytes (read_packet_strictly strips CRC)
-        if is_valid:
-            self.log(f"Board received from CMD_START")
+        # Чекаємо 5 секунд на генерацію
+        resp = self.controller.uart.read_packet_strictly(PACKET_SIZE, timeout_sec=10.0)
+        valid, payload = self.validate_response(CMD_START, resp, 51)
+        if valid:
             self.selected_index = None
             self.update_shuffle_counter(5)
-            self.draw_pyramid(payload[1:])  # Skip CMD byte, use 50 board bytes
+            self.draw_pyramid(payload[1:])
         else:
             self.handle_error(self.send_start_command)
 
-    def update_shuffle_counter(self, count):
-        self.shuffles_left = count
-        self.lbl_shuffles.config(text=f"Attemps: {count}")
-        
-        if self.shuffles_left <= 0:
-            self.lbl_shuffles.config(fg="red")
-            self.btn_shuffle.config(state="disabled") # Кнопка стане сірою
-        else:
-            self.lbl_shuffles.config(fg="black")
-            self.btn_shuffle.config(state="normal") # Кнопка активна
-
     def send_shuffle_command(self):
-        self.log(f"CMD_SHUFFLE (0x{CMD_SHUFFLE:02X}) sent")
+        self.log("CMD_SHUFFLE sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_SHUFFLE, 0x00):
-            self.log(f"Failed to send CMD_SHUFFLE")
-            self.handle_error(self.send_shuffle_command)
-            return
-        
-        # Read first 3 bytes to determine if success or limit error
-        try:
-            header = self.controller.uart.ser.read(3)
-        except Exception:
-            self.log(f"Exception reading SHUFFLE response header")
             self.handle_error(self.send_shuffle_command)
             return
 
-        if len(header) != 3:
-            self.log(f"Incomplete header: got {len(header)} bytes, expected 3")
-            self.handle_error(self.send_shuffle_command)
-            return
+        # Спочатку намагаємося прочитати як повну дошку (52 байти)
+        resp = self.controller.uart.read_packet_strictly(PACKET_SIZE, timeout_sec=4.0)
         
-        cmd_echo = header[0]
-        if cmd_echo != CMD_SHUFFLE:
-            self.log(f"CMD mismatch in SHUFFLE. Sent 0x{CMD_SHUFFLE:02X}, got 0x{cmd_echo:02X}")
-            self.handle_error(self.send_shuffle_command)
-            return
-        
-        # Check if error response (3 bytes) or success response (52 bytes)
-        if header[1] == 0xFF:  # Limit reached
-            crc_check = self.controller.uart._calculate_crc(header[:2])
-            if crc_check == header[2]:
-                self.log(f"Shuffle limit reached")
+        if resp and len(resp) == 51: # Успіх
+            self.update_shuffle_counter(self.shuffles_left - 1)
+            self.selected_index = None
+            self.draw_pyramid(resp[1:])
+        else:
+            # Якщо дошка не прийшла, можливо це помилка ліміту (0xFF)
+            # Перевіримо буфер на 3-байтову відповідь
+            if resp and len(resp) == 2 and resp[1] == 0xFF:
                 messagebox.showwarning("Shuffle", "Limit reached!")
                 self.update_shuffle_counter(0)
             else:
-                self.log(f"CRC error on shuffle limit response")
                 self.handle_error(self.send_shuffle_command)
-        else:  # Success - read full board
-            try:
-                rest = self.controller.uart.ser.read(49)
-            except Exception:
-                self.log(f"Exception reading SHUFFLE board data")
-                self.handle_error(self.send_shuffle_command)
-                return
-            
-            if len(rest) != 49:
-                self.log(f"Incomplete board data: got {len(rest)} bytes, expected 49")
-                self.handle_error(self.send_shuffle_command)
-                return
-            
-            full_packet = header + rest
-            crc_check = self.controller.uart._calculate_crc(full_packet[:-1])
-            if crc_check == full_packet[-1]:
-                self.log(f"Board received from SHUFFLE")
-                new_count = self.shuffles_left - 1
-                if new_count < 0:
-                    new_count = 0
-                self.update_shuffle_counter(new_count)
-                self.selected_index = None
-                self.draw_pyramid(full_packet[1:-1])  # Extract 50 board bytes
-            else:
-                self.log(f"CRC error on shuffle board response")
-                self.handle_error(self.send_shuffle_command)
-
-    def send_giveup_command(self):
-        self.log(f"CMD_GIVE_UP (0x{CMD_GIVE_UP:02X}) sent")
-        self.controller.uart.reset_buffer()
-        if not self.controller.uart.send_packet(CMD_GIVE_UP, 0x00):
-            self.log(f"Failed to send CMD_GIVE_UP")
-            self.handle_error(self.send_giveup_command)
-            return
-        
-        resp = self.controller.uart.read_packet_strictly(3)
-        is_valid, payload = self.validate_response(CMD_GIVE_UP, resp, 2)
-        if is_valid:
-            self.log(f"CMD_GIVE_UP acknowledged")
-            self.exit_to_menu()
-        else:
-            self.handle_error(self.send_giveup_command)
 
     def send_select_command(self, index):
-        self.log(f"CMD_SELECT (0x{CMD_SELECT:02X}) sent with index {index}")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_SELECT, index):
-            self.log(f"Failed to send CMD_SELECT")
             self.handle_error(self.send_select_command, index)
             return
         
-        resp = self.controller.uart.read_packet_strictly(3)
-        is_valid, payload = self.validate_response(CMD_SELECT, resp, 2)
-        if is_valid:
-            status = resp[1]
-            if status == 0x00:  # Select Success
-                self.log(f"Tile {index} selected")
+        resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+        valid, payload = self.validate_response(CMD_SELECT, resp, 2)
+        if valid:
+            if payload[1] == 0x00:
                 self.selected_index = index
                 self.draw_pyramid(self.current_board_data)
             else:
-                self.log(f"Select failed for tile {index}")
                 self.show_error_blink([index])
         else:
             self.handle_error(self.send_select_command, index)
 
     def send_match_command(self, index):
-        self.log(f"CMD_MATCH (0x{CMD_MATCH:02X}) sent with index {index}")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_MATCH, index):
-            self.log(f"Failed to send CMD_MATCH")
             self.handle_error(self.send_match_command, index)
             return
         
-        resp = self.controller.uart.read_packet_strictly(3)
-        is_valid, payload = self.validate_response(CMD_MATCH, resp, 2)
-        if is_valid:
-            result = resp[1]
-            if result == 0x01:  # Match Success
-                self.log(f"Match! Indices {self.selected_index} and {index}")
+        resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+        valid, payload = self.validate_response(CMD_MATCH, resp, 2)
+        if valid:
+            if payload[1] == 0x01: # Match
                 temp_board = bytearray(self.current_board_data)
                 temp_board[self.selected_index] = 0x00
                 temp_board[index] = 0x00
@@ -292,16 +200,44 @@ class GameInterface(tk.Frame):
                 self.selected_index = None
                 self.draw_pyramid(self.current_board_data)
             else:
-                self.log(f"No match: indices {self.selected_index} and {index}")
                 old_idx = self.selected_index
                 self.selected_index = None
                 self.show_error_blink([old_idx, index])
         else:
             self.handle_error(self.send_match_command, index)
 
-    # --- ЛОГІКА ТА ВІЗУАЛ ---
+    def request_hint(self):
+        self.controller.uart.reset_buffer()
+        if not self.controller.uart.send_packet(CMD_HINT, 0x00):
+            self.handle_error(self.request_hint)
+            return
+
+        resp = self.controller.uart.read_packet_strictly(4, timeout_sec=1.5)
+        valid, payload = self.validate_response(CMD_HINT, resp, 3)
+        if valid:
+            idx1, idx2 = payload[1], payload[2]
+            if idx1 == 100:
+                messagebox.showinfo("Hint", "No pairs left!")
+            else:
+                self.show_hint_blink([idx1, idx2])
+        else:
+            self.handle_error(self.request_hint)
+
+    def send_giveup_command(self):
+        self.controller.uart.reset_buffer()
+        if self.controller.uart.send_packet(CMD_GIVE_UP, 0x00):
+            resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+            if resp: self.exit_to_menu()
+        else:
+            self.handle_error(self.send_giveup_command)
+
+    # --- ВІЗУАЛІЗАЦІЯ (БЕЗ ЗМІН) ---
+    def update_shuffle_counter(self, count):
+        self.shuffles_left = max(0, count)
+        self.lbl_shuffles.config(text=f"Attempts: {self.shuffles_left}", fg="red" if self.shuffles_left == 0 else "black")
+        self.btn_shuffle.config(state="disabled" if self.shuffles_left == 0 else "normal")
+
     def on_canvas_click(self, event):
-        self.log(f"Canvas clicked at ({event.x}, {event.y})")
         if not self.current_board_data: return
         clicked_idx = -1
         for hb in reversed(self.hitboxes):
@@ -325,6 +261,15 @@ class GameInterface(tk.Frame):
 
     def clear_blink(self):
         self.error_tiles = []
+        if self.current_board_data: self.draw_pyramid(self.current_board_data)
+
+    def show_hint_blink(self, indices):
+        self.hint_tiles = indices
+        self.draw_pyramid(self.current_board_data)
+        self.after(1500, self.clear_hint_blink)
+
+    def clear_hint_blink(self):
+        self.hint_tiles = []
         if self.current_board_data: self.draw_pyramid(self.current_board_data)
 
     def draw_pyramid(self, data):
@@ -364,42 +309,6 @@ class GameInterface(tk.Frame):
         for r in range(3):
             for c in range(3): draw_tile(i, c, r, 2, 1, 1); i += 1
 
-    def request_hint(self):
-        self.log(f"CMD_HINT (0x{CMD_HINT:02X}) sent")
-        if not self.controller.uart.is_open:
-            self.log(f"UART not open")
-            return
-        self.controller.uart.reset_buffer()
-
-        # Send: [CMD_HINT, DATA=0x00, CRC]
-        if not self.controller.uart.send_packet(CMD_HINT, 0x00):
-            self.log(f"Failed to send CMD_HINT")
-            self.handle_error(self.request_hint)
-            return
-
-        # Read with CRC validation: [CMD, idx1, idx2, CRC]
-        ans = self.controller.uart.read_packet_strictly(4)
-        is_valid, payload = self.validate_response(CMD_HINT, ans, 3)  # 1 CMD + 2 indices
-        if is_valid:
-            idx1, idx2 = payload[1], payload[2]
-            if idx1 == 100:
-                self.log(f"No matching pairs available")
-                messagebox.showinfo("Hint", "Більше немає доступних пар!")
-            else:
-                self.log(f"Hint found: indices {idx1} and {idx2}")
-                self.show_hint_blink([idx1, idx2])
-        else:
-            self.handle_error(self.request_hint)
-
-    def show_hint_blink(self, indices):
-        self.hint_tiles = indices
-        self.draw_pyramid(self.current_board_data)
-        self.after(1500, self.clear_hint_blink)
-
-    def clear_hint_blink(self):
-        self.hint_tiles = []
-        if self.current_board_data:
-            self.draw_pyramid(self.current_board_data)
 # --- ДОДАТОК ---
 class MahjongApp(tk.Tk):
     def __init__(self):

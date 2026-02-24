@@ -16,8 +16,8 @@ class UARTHandler:
 
     def open_port(self):
         try:
-            # Таймаут 1.5с дозволяє STM32 встигнути відповісти на складні команди
-            self.ser = serial.Serial(self.port_name, self.baudrate, timeout=1.5)
+            # Базовий таймаут низького рівня ставимо невеликим (0.1с)
+            self.ser = serial.Serial(self.port_name, self.baudrate, timeout=0.1)
             self.is_open = True
             return True
         except Exception:
@@ -34,57 +34,56 @@ class UARTHandler:
         return self.ser is not None and self.ser.is_open
 
     def reconnect(self):
-        """Спроба відновити зв'язок з тим самим портом."""
         self.close_port()
         return self.open_port()
 
     def _calculate_crc(self, data: bytes):
-        """Контрольна сума XOR (як вимагає протокол)."""
         crc = 0
         for byte in data:
             crc ^= byte
         return crc
 
     def send_packet(self, cmd, data_byte):
-        """Відправляє [CMD, DATA, CRC]. Повертає True якщо успішно."""
-        if not self.is_connected():
-            return False
+        if not self.is_connected(): return False
         try:
             payload = struct.pack("BB", cmd, data_byte)
             crc = self._calculate_crc(payload)
             self.ser.write(payload + struct.pack("B", crc))
             self.ser.flush()
             return True
-        except (serial.SerialException, AttributeError):
+        except:
             self.is_open = False
             return False
 
-    def read_packet_strictly(self, count):
-        """Читає 'count' байтів, перевіряє CRC. Повертає Payload або None."""
-        if not self.is_connected():
-            return None
+    def read_packet_strictly(self, count, timeout_sec=2.0):
+
+        if not self.is_connected(): return None
+        
+        start_time = time.time()
+        buffer = b""
+        
         try:
-            data = self.ser.read(count)
-            if len(data) == count:
-                if self._calculate_crc(data[:-1]) == data[-1]:
-                    return data[:-1]
+            while len(buffer) < count:
+                # Перевіряємо, чи не вийшов загальний час очікування
+                if (time.time() - start_time) > timeout_sec:
+                    return None 
+                
+                # Читаємо те, що вже є в буфері (або чекаємо 0.1с згідно timeout в open_port)
+                remaining = count - len(buffer)
+                chunk = self.ser.read(remaining)
+                if chunk:
+                    buffer += chunk
+            
+            # Перевірка CRC
+            if len(buffer) == count:
+                if self._calculate_crc(buffer[:-1]) == buffer[-1]:
+                    return buffer[:-1] # Повертаємо дані без байта CRC
             return None
+            
         except (serial.SerialException, AttributeError):
             self.is_open = False
             return None
 
-    def read_bytes(self, count):
-        """Читає рівно 'count' байтів. Повертає bytes або None при помилці."""
-        if not self.is_connected():
-            return None
-        try:
-            data = self.ser.read(count)
-            if len(data) == count:
-                return data
-            return None
-        except (serial.SerialException, AttributeError):
-            self.is_open = False
-            return None
     def reset_buffer(self):
         if self.is_connected():
             try:
