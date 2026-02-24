@@ -16,7 +16,7 @@ const char hexTable[] = "0123456789ABCDEF";
 static uint8_t calcLogicCRC(uint8_t cmd, uint8_t *data, uint8_t len) {
     uint8_t crc = cmd;
     for (int i = 0; i < len; i++) {
-        crc ^= data[i];
+        crc ^= data[i] + 1;
     }
     return crc;
 }

@@ -103,31 +103,58 @@ class GameInterface(tk.Frame):
                 self.handle_error(retry_func, *args)
         else: # Натиснуто CANCEL
             self.exit_to_menu()
+    
+    def validate_response(self, cmd_sent, response, expected_size):
+        """Validate that response command matches sent command and has correct size.
+        Returns (is_valid, payload) where payload excludes CRC.
+        """
+        if not response or len(response) < 1:
+            self.log(f"Error: No response received")
+            return False, None
+        
+        cmd_echo = response[0]
+        if cmd_echo != cmd_sent:
+            self.log(f"Error: CMD mismatch. Sent 0x{cmd_sent:02X}, got 0x{cmd_echo:02X}")
+            return False, None
+        
+        if len(response) != expected_size:
+            self.log(f"Error: Size mismatch. Expected {expected_size}, got {len(response)}")
+            return False, None
+        
+        return True, response
 
     # --- КОМАНДИ ---
     def send_reset_command(self):
-        self.log("CMD_RESET sent")
+        self.log(f"CMD_RESET (0x{CMD_RESET:02X}) sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_RESET, 0x00):
-            self.handle_error(self.send_reset_command); return
+            self.log(f"Failed to send CMD_RESET")
+            self.handle_error(self.send_reset_command)
+            return
         
         resp = self.controller.uart.read_packet_strictly(3)
-        if resp:
+        is_valid, payload = self.validate_response(CMD_RESET, resp, 2)
+        if is_valid:
+            self.log(f"CMD_RESET acknowledged")
             self.after(500, self.send_start_command)
         else:
             self.handle_error(self.send_reset_command)
 
     def send_start_command(self):
-        self.log("CMD_START sent")
+        self.log(f"CMD_START (0x{CMD_START:02X}) sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_START, 0x00):
-            self.handle_error(self.send_start_command); return
+            self.log(f"Failed to send CMD_START")
+            self.handle_error(self.send_start_command)
+            return
         
         resp = self.controller.uart.read_packet_strictly(PACKET_SIZE)
-        if resp:
+        is_valid, payload = self.validate_response(CMD_START, resp, 51)  # 1 CMD + 50 board bytes (read_packet_strictly strips CRC)
+        if is_valid:
+            self.log(f"Board received from CMD_START")
             self.selected_index = None
             self.update_shuffle_counter(5)
-            self.draw_pyramid(resp[1:]) # Дані після байта CMD
+            self.draw_pyramid(payload[1:])  # Skip CMD byte, use 50 board bytes
         else:
             self.handle_error(self.send_start_command)
 
@@ -143,92 +170,121 @@ class GameInterface(tk.Frame):
             self.btn_shuffle.config(state="normal") # Кнопка активна
 
     def send_shuffle_command(self):
-        self.log("CMD_SHUFFLE sent")
+        self.log(f"CMD_SHUFFLE (0x{CMD_SHUFFLE:02X}) sent")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_SHUFFLE, 0x00):
+            self.log(f"Failed to send CMD_SHUFFLE")
             self.handle_error(self.send_shuffle_command)
             return
         
-        # --- THE FIX: DYNAMIC PACKET READING ---
-        # 1. Спершу читаємо 3 байти
+        # Read first 3 bytes to determine if success or limit error
         try:
             header = self.controller.uart.ser.read(3)
         except Exception:
+            self.log(f"Exception reading SHUFFLE response header")
             self.handle_error(self.send_shuffle_command)
             return
 
-        if len(header) == 3:
-            # Якщо другий байт 0xFF - це відмова (ліміт вичерпано)
-            if header[1] == 0xFF: 
-                # Перевіряємо CRC пакету помилки
-                if self.controller.uart._calculate_crc(header[:2]) == header[2]:
-                    messagebox.showwarning("Shuffle", "Limit reached!")
-                    self.update_shuffle_counter(0)
-                else:
-                    self.handle_error(self.send_shuffle_command)
-            
-            # Якщо пакет успішний (52 байти)
-            else: 
-                try:
-                    rest = self.controller.uart.ser.read(49) # Дочитуємо решту масиву
-                except Exception:
-                    self.handle_error(self.send_shuffle_command)
-                    return
-                
-                if len(rest) == 49:
-                    full_packet = header + rest
-                    # Перевіряємо CRC на всьому 52-байтному пакеті
-                    if self.controller.uart._calculate_crc(full_packet[:-1]) == full_packet[-1]:
-                        new_count = self.shuffles_left - 1
-                        if new_count < 0:
-                            new_count = 0
-                        self.update_shuffle_counter(new_count)
-                        self.selected_index = None
-                        self.draw_pyramid(full_packet[1:-1]) # Extract the 50 board bytes
-                    else:
-                        self.handle_error(self.send_shuffle_command)
-                else:
-                    self.handle_error(self.send_shuffle_command)
-        else:
+        if len(header) != 3:
+            self.log(f"Incomplete header: got {len(header)} bytes, expected 3")
             self.handle_error(self.send_shuffle_command)
+            return
+        
+        cmd_echo = header[0]
+        if cmd_echo != CMD_SHUFFLE:
+            self.log(f"CMD mismatch in SHUFFLE. Sent 0x{CMD_SHUFFLE:02X}, got 0x{cmd_echo:02X}")
+            self.handle_error(self.send_shuffle_command)
+            return
+        
+        # Check if error response (3 bytes) or success response (52 bytes)
+        if header[1] == 0xFF:  # Limit reached
+            crc_check = self.controller.uart._calculate_crc(header[:2])
+            if crc_check == header[2]:
+                self.log(f"Shuffle limit reached")
+                messagebox.showwarning("Shuffle", "Limit reached!")
+                self.update_shuffle_counter(0)
+            else:
+                self.log(f"CRC error on shuffle limit response")
+                self.handle_error(self.send_shuffle_command)
+        else:  # Success - read full board
+            try:
+                rest = self.controller.uart.ser.read(49)
+            except Exception:
+                self.log(f"Exception reading SHUFFLE board data")
+                self.handle_error(self.send_shuffle_command)
+                return
+            
+            if len(rest) != 49:
+                self.log(f"Incomplete board data: got {len(rest)} bytes, expected 49")
+                self.handle_error(self.send_shuffle_command)
+                return
+            
+            full_packet = header + rest
+            crc_check = self.controller.uart._calculate_crc(full_packet[:-1])
+            if crc_check == full_packet[-1]:
+                self.log(f"Board received from SHUFFLE")
+                new_count = self.shuffles_left - 1
+                if new_count < 0:
+                    new_count = 0
+                self.update_shuffle_counter(new_count)
+                self.selected_index = None
+                self.draw_pyramid(full_packet[1:-1])  # Extract 50 board bytes
+            else:
+                self.log(f"CRC error on shuffle board response")
+                self.handle_error(self.send_shuffle_command)
 
     def send_giveup_command(self):
-        self.log("CMD_GIVE_UP sent")
+        self.log(f"CMD_GIVE_UP (0x{CMD_GIVE_UP:02X}) sent")
+        self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_GIVE_UP, 0x00):
-            self.handle_error(self.send_giveup_command); return
+            self.log(f"Failed to send CMD_GIVE_UP")
+            self.handle_error(self.send_giveup_command)
+            return
         
         resp = self.controller.uart.read_packet_strictly(3)
-        if resp:
+        is_valid, payload = self.validate_response(CMD_GIVE_UP, resp, 2)
+        if is_valid:
+            self.log(f"CMD_GIVE_UP acknowledged")
             self.exit_to_menu()
         else:
             self.handle_error(self.send_giveup_command)
 
     def send_select_command(self, index):
-        self.log(f"CMD_SELECT sent with index {index}")
+        self.log(f"CMD_SELECT (0x{CMD_SELECT:02X}) sent with index {index}")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_SELECT, index):
-            self.handle_error(self.send_select_command, index); return
+            self.log(f"Failed to send CMD_SELECT")
+            self.handle_error(self.send_select_command, index)
+            return
         
         resp = self.controller.uart.read_packet_strictly(3)
-        if resp:
-            if resp[1] == 0x00: # Select Success
+        is_valid, payload = self.validate_response(CMD_SELECT, resp, 2)
+        if is_valid:
+            status = resp[1]
+            if status == 0x00:  # Select Success
+                self.log(f"Tile {index} selected")
                 self.selected_index = index
                 self.draw_pyramid(self.current_board_data)
             else:
+                self.log(f"Select failed for tile {index}")
                 self.show_error_blink([index])
         else:
             self.handle_error(self.send_select_command, index)
 
     def send_match_command(self, index):
-        self.log(f"CMD_MATCH sent with index {index}")
+        self.log(f"CMD_MATCH (0x{CMD_MATCH:02X}) sent with index {index}")
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_MATCH, index):
-            self.handle_error(self.send_match_command, index); return
+            self.log(f"Failed to send CMD_MATCH")
+            self.handle_error(self.send_match_command, index)
+            return
         
         resp = self.controller.uart.read_packet_strictly(3)
-        if resp:
-            if resp[1] == 0x01: # Match Success
-                self.log(f"Tiles at indices {self.selected_index} and {index} matched!")
+        is_valid, payload = self.validate_response(CMD_MATCH, resp, 2)
+        if is_valid:
+            result = resp[1]
+            if result == 0x01:  # Match Success
+                self.log(f"Match! Indices {self.selected_index} and {index}")
                 temp_board = bytearray(self.current_board_data)
                 temp_board[self.selected_index] = 0x00
                 temp_board[index] = 0x00
@@ -236,7 +292,7 @@ class GameInterface(tk.Frame):
                 self.selected_index = None
                 self.draw_pyramid(self.current_board_data)
             else:
-                self.log(f"Match failed between indices {self.selected_index} and {index}")
+                self.log(f"No match: indices {self.selected_index} and {index}")
                 old_idx = self.selected_index
                 self.selected_index = None
                 self.show_error_blink([old_idx, index])
@@ -309,20 +365,28 @@ class GameInterface(tk.Frame):
             for c in range(3): draw_tile(i, c, r, 2, 1, 1); i += 1
 
     def request_hint(self):
-        self.log("CMD_HINT sent")
-        if not self.controller.uart.is_open: return
+        self.log(f"CMD_HINT (0x{CMD_HINT:02X}) sent")
+        if not self.controller.uart.is_open:
+            self.log(f"UART not open")
+            return
         self.controller.uart.reset_buffer()
 
+        # Send: [CMD_HINT, DATA=0x00, CRC]
         if not self.controller.uart.send_packet(CMD_HINT, 0x00):
-            self.handle_error(self.request_hint);
+            self.log(f"Failed to send CMD_HINT")
+            self.handle_error(self.request_hint)
             return
 
-        ans = self.controller.uart.read_bytes(4)
-        if ans and ans[0] == CMD_HINT:
-            idx1, idx2 = ans[1], ans[2]
+        # Read with CRC validation: [CMD, idx1, idx2, CRC]
+        ans = self.controller.uart.read_packet_strictly(4)
+        is_valid, payload = self.validate_response(CMD_HINT, ans, 3)  # 1 CMD + 2 indices
+        if is_valid:
+            idx1, idx2 = payload[1], payload[2]
             if idx1 == 100:
+                self.log(f"No matching pairs available")
                 messagebox.showinfo("Hint", "Більше немає доступних пар!")
             else:
+                self.log(f"Hint found: indices {idx1} and {idx2}")
                 self.show_hint_blink([idx1, idx2])
         else:
             self.handle_error(self.request_hint)

@@ -223,7 +223,8 @@ int main(void)
                                 tx_packet[2] = 100;
                             }
 
-                            tx_packet[3] = tx_packet[0] ^ tx_packet[1] ^ tx_packet[2]; // CRC
+                            // Calculate CRC using the same function as other commands
+                            tx_packet[3] = Calc_CRC(tx_packet, 3);
                             HAL_UART_Transmit(&huart1, tx_packet, 4, 100);
                         }
             }

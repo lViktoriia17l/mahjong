@@ -84,7 +84,7 @@ class UARTHandler:
             return None
         except (serial.SerialException, AttributeError):
             self.is_open = False
-            return False
+            return None
     def reset_buffer(self):
         if self.is_connected():
             try:
