@@ -177,11 +177,13 @@ class GameInterface(tk.Frame):
             self.update_shuffle_counter(self.shuffles_left - 1)
             self.selected_index = None
             self.draw_pyramid(resp[1:])
+            self.check_game_over()
         else:
             # Якщо дошка не прийшла, можливо це помилка ліміту (0xFF)
             # Перевіримо буфер на 3-байтову відповідь
             self.log("No full board received, checking for shuffle limit response...")
             if resp and len(resp) == 2 and resp[1] == 0xFF:
+                self.check_game_over()
                 self.log("Shuffle limit reached")
                 messagebox.showwarning("Shuffle", "Limit reached!")
                 self.update_shuffle_counter(0)
@@ -232,6 +234,9 @@ class GameInterface(tk.Frame):
                 self.current_board_data = bytes(temp_board)
                 self.selected_index = None
                 self.draw_pyramid(self.current_board_data)
+                self.check_game_over()
+                if all(val == 0 for val in self.current_board_data): #я
+                    self.after(500, lambda: self.show_end_game_popup("VICTORY!", "You cleared the board!", "#2E7D32"))
             else:
                 self.log(f"Tiles at indices {self.selected_index} and {index} do NOT match")
                 old_idx = self.selected_index
@@ -274,6 +279,45 @@ class GameInterface(tk.Frame):
         else:
             self.log("Failed to send CMD_GIVE_UP")
             self.handle_error(self.send_giveup_command)
+
+    def check_game_over(self):
+        # Якщо є спроби перемішування - гра продовжується
+        if self.shuffles_left > 0:
+            return
+
+        # Якщо спроб немає, запитуємо STM32, чи є ще ходи (викликаємо CMD_HINT)
+        self.controller.uart.reset_buffer()
+        if self.controller.uart.send_packet(CMD_HINT, 0x00):
+            resp = self.controller.uart.read_packet_strictly(4, timeout_sec=1.5)
+            valid, payload = self.validate_response(CMD_HINT, resp, 3)
+            if valid and payload[1] == 100: # 100 означає "No pairs left" в твоєму С-коді
+                self.show_end_game_popup("GAME OVER", "No moves left & no shuffles.", "#D32F2F")
+
+    # final screen of win/lose
+    def show_end_game_popup(self, title, message, color):
+        # Створюємо нове вікно поверх основного
+        popup = tk.Toplevel(self)
+        popup.title(title)
+        popup.geometry("300x200")
+        popup.configure(bg="#f0f0f0")
+        
+        # Робимо його модальним (блокуємо основне вікно)
+        popup.grab_set()
+        
+        # Текст повідомлення
+        tk.Label(popup, text=title, font=("Arial", 18, "bold"), fg=color, bg="#f0f0f0").pack(pady=10)
+        tk.Label(popup, text=message, font=("Arial", 10), bg="#f0f0f0").pack(pady=5)
+        
+        btn_frame = tk.Frame(popup, bg="#f0f0f0")
+        btn_frame.pack(pady=20)
+        
+        # Кнопка "Спробувати знову"
+        tk.Button(btn_frame, text="Retry", width=10, bg="#4CAF50", fg="white",
+                  command=lambda: [popup.destroy(), self.send_reset_command()]).pack(side=tk.LEFT, padx=5)
+        
+        # Кнопка "В меню"
+        tk.Button(btn_frame, text="Menu", width=10, bg="#607D8B", fg="white",
+                  command=lambda: [popup.destroy(), self.exit_to_menu()]).pack(side=tk.LEFT, padx=5)
 
     # --- ВІЗУАЛІЗАЦІЯ (БЕЗ ЗМІН) ---
     def update_shuffle_counter(self, count):
