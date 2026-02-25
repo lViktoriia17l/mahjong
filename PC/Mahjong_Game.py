@@ -25,9 +25,17 @@ class MainMenu(tk.Frame):
         super().__init__(parent, bg="#f0f0f0")
         self.controller = controller
         
-        tk.Label(self, text="STM32 Mahjong Console", font=("Arial", 28, "bold"), bg="#f0f0f0").pack(pady=(100, 10))
+        tk.Label(self, text="STM32 Mahjong", font=("Arial", 28, "bold"), bg="#f0f0f0").pack(pady=(100, 10))
         self.lbl_status = tk.Label(self, text="Ready", font=("Arial", 10, "italic"), bg="#f0f0f0")
         self.lbl_status.pack(pady=(0, 20))
+
+        # Player Name Entry
+        frame_name = tk.Frame(self, bg="#f0f0f0")
+        frame_name.pack(pady=(10, 20))
+        tk.Label(frame_name, text="Player Name: (Up to 10 characters)", font=("Arial", 12), bg="#f0f0f0").grid(row=0, column=0, padx=5)
+        self.player_name_var = tk.StringVar(value="Player1")
+        self.entry_name = tk.Entry(frame_name, textvariable=self.player_name_var, font=("Arial", 12), width=15)
+        self.entry_name.grid(row=0, column=1, padx=5)
 
         frame_port = tk.Frame(self, bg="#f0f0f0")
         frame_port.pack()
@@ -46,6 +54,18 @@ class MainMenu(tk.Frame):
         self.combo_ports['values'] = ports
         if ports: self.combo_ports.current(0)
         else: self.port_var.set("No Ports Found")
+
+    def send_player_name(self, name):
+        """
+        PLACEHOLDER: Handle the entered name.
+        You can format this into a new UART packet (e.g., CMD_SET_NAME = 0x09) 
+        to send the string to the STM32, or just save it locally for a leaderboard.
+        """
+        self.log(f"Registered player name: {name}")
+        
+        # Example for future UART implementation (requires updating UARTHandler to send variable length arrays):
+        # byte_name = name.encode('ascii')[:10] # Limit to 10 chars
+        # self.controller.uart.send_packet(CMD_SET_NAME, byte_name)
 
     def connect(self):
         self.log("Attempting to connect...")
