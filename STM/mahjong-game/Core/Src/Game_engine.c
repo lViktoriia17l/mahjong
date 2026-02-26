@@ -1,5 +1,6 @@
 /* mahjong.c */
 #include "mahjong.h"
+#include "main.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,6 +18,9 @@
 // --- Private Variables ---
 static uint8_t board_state[TOTAL_PIECES];
 static char current_player_name[16] = "Player1";
+
+volatile uint32_t hardware_seconds = 0;
+static uint8_t hw_timer_running = 0;
 
 // --- Private Helper Functions ---
 static void add_tiles(uint8_t *index, uint8_t group, int start_val, int count, int copies) {
@@ -64,4 +68,22 @@ void Mahjong_SetPlayerName(const char* name) {
 
 char* Mahjong_GetPlayerName(void) {
     return current_player_name;
+}
+
+
+void Timer_Start(void) {
+    hardware_seconds = 0;
+    hw_timer_running = 1;
+    // The hardware timer itself should be started in main.c
+}
+
+uint32_t Timer_GetSeconds(void) {
+    return hardware_seconds;
+}
+
+// Called by the hardware timer interrupt every 1 second
+void Timer_Tick(void) {
+    if (hw_timer_running) {
+        hardware_seconds++;
+    }
 }

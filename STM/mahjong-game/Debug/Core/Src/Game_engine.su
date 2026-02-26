@@ -1,0 +1,9 @@
+../Core/Src/Game_engine.c:26:13:add_tiles	32	static
+../Core/Src/Game_engine.c:36:6:Mahjong_Init	8	static
+../Core/Src/Game_engine.c:41:6:Mahjong_Generate_New_Layout	32	static
+../Core/Src/Game_engine.c:59:10:Mahjong_Get_Board_State	8	static
+../Core/Src/Game_engine.c:63:6:Mahjong_SetPlayerName	16	static
+../Core/Src/Game_engine.c:69:7:Mahjong_GetPlayerName	8	static
+../Core/Src/Game_engine.c:74:6:Timer_Start	8	static
+../Core/Src/Game_engine.c:80:10:Timer_GetSeconds	8	static
+../Core/Src/Game_engine.c:85:6:Timer_Tick	8	static

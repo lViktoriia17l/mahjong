@@ -18,6 +18,7 @@
 #define CMD_HINT      0x08
 #define CMD_SET_NAME  0x09
 #define CMD_GET_NAME  0x0A
+#define CMD_GET_TIME  0x0B
 // Tile Groups
 #define GRP_FLOWERS   0b101
 #define GRP_SEASONS   0b110
@@ -38,4 +39,9 @@ void cmd_give_up(void);
 // Game State Functions
 void Mahjong_SetPlayerName(const char* name);
 char* Mahjong_GetPlayerName(void);
+void Mahjong_Start_Timer(void);
+uint32_t Mahjong_Get_Elapsed_Seconds(void);
+void Timer_Start(void);
+uint32_t Timer_GetSeconds(void);
+void Timer_Tick(void);
 #endif

@@ -1,13 +1,19 @@
-
-/*---------------------------- mahjong-game build 2 --------------------------*/
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  */
+/* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h> // For rand
 
+/* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "mahjong.h" // <--- 1. Summon the module
+#include "mahjong.h"
+#include <stdlib.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -17,16 +23,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define CMD_START 0x01
-#define CMD_RESET 0x02
-#define CMD_SHUFFLE 0x03
-#define CMD_SELECT 0x04
-#define CMD_MATCH 0x05
-#define CMD_GET_STATE 0x06
-#define CMD_GIVE_UP 0x07
-#define CMD_HINT 0x08
-#define CMD_SET_NAME 0x09
-#define CMD_GET_NAME 0x0A
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -35,6 +32,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim2;
+
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
@@ -48,6 +47,7 @@ volatile uint8_t packet_ready = 0; // Flag to tell Main that data arrived
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 uint8_t Calc_CRC(uint8_t *data, uint8_t len);
 /* USER CODE END PFP */
@@ -62,17 +62,19 @@ uint8_t Calc_CRC(uint8_t *data, uint8_t len) {
     return crc;
 }
 
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    // Check if the interrupt came from TIM2
+    if (htim->Instance == TIM2) {
+        Timer_Tick(); // Increment our game seconds
+    }
+}
+
 /* --------- UART RX callback (Interrupt) --------- */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART1)
     {
-        // We received exactly 3 bytes into rx_packet
         packet_ready = 1;
-
-        // Note: We do NOT restart the interrupt here immediately.
-        // We restart it in the main loop after processing to prevent
-        // overwriting the buffer while we are reading it.
     }
 }
 /* USER CODE END 0 */
@@ -83,23 +85,37 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
   SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
-
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-  // --- 2. Initialize Game Engine ---
-  Mahjong_Init();
 
-  // Seed Randomness (Uses system uptime)
+  Mahjong_Init();
   srand(HAL_GetTick());
 
-  //HAL_UART_Transmit(&huart1, (uint8_t*)"UART READY (BINARY MODE)\r\n", 26, 100);
+  // Start the timer interrupt
+  HAL_TIM_Base_Start_IT(&htim2);
 
   // Start listening for the first 3-byte command
   HAL_UART_Receive_IT(&huart1, rx_packet, 3);
@@ -107,192 +123,107 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-    while (1)
-    {
-        if (packet_ready)
-        {
-            packet_ready = 0;
+  while (1)
+  {
+    if (packet_ready) {
+        uint8_t cmd = rx_packet[0];
+        uint8_t data = rx_packet[1];
+        uint8_t received_crc = rx_packet[2];
 
-            uint8_t cmd = rx_packet[0];
-            uint8_t data_byte = rx_packet[1];
-            uint8_t received_crc = rx_packet[2];
+        uint8_t calculated_crc = Calc_CRC(rx_packet, 2);
 
-            // Check CRC
-            if ((cmd ^ data_byte) == received_crc)
-            {
-                // ------------------------------------------------
-                // COMMAND: START (0x01)
-                // ------------------------------------------------
-                if (cmd == CMD_START)
-                {
-                    Mahjong_Generate_New_Layout(); // Initial Generation
+        if (calculated_crc == received_crc) {
 
-                    tx_packet[0] = CMD_START;
-                    uint8_t* game_ptr = Mahjong_Get_Board_State();
-                    memcpy(&tx_packet[1], game_ptr, TOTAL_PIECES);
-                    tx_packet[51] = Calc_CRC(tx_packet, 51);
-                    HAL_UART_Transmit(&huart1, tx_packet, 52, 100);
-                }
+            memset(tx_packet, 0, sizeof(tx_packet));
+            tx_packet[0] = cmd;
 
-                // ------------------------------------------------
-                // COMMAND: RESET (0x02)
-                // ------------------------------------------------
-                else if (cmd == CMD_RESET)
-                {
-                    cmd_reset(); // Call command_list logic
+            switch (cmd) {
+                case CMD_START:
+                    Mahjong_Generate_New_Layout();
+                    Timer_Start(); // Start the game clock
+                    memcpy(&tx_packet[1], Mahjong_Get_Board_State(), 50);
+                    break;
 
-                    // Send Confirmation: [CMD] [0x00] [CRC]
-                    tx_packet[0] = CMD_RESET;
-                    tx_packet[1] = 0x00; // OK
-                    tx_packet[2] = Calc_CRC(tx_packet, 2);
-                    HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
-                }
-
-                // ------------------------------------------------
-                // COMMAND: SHUFFLE (0x03)
-                // ------------------------------------------------
-                else if (cmd == CMD_SHUFFLE)
-                {
-                    uint8_t status = cmd_shuffle(); // Returns 0x00 (OK) or 0xFF (Limit)
-
-                    if (status == 0x00) {
-                        // Send New Board State (52 bytes)
-                        tx_packet[0] = CMD_SHUFFLE;
-                        uint8_t* game_ptr = Mahjong_Get_Board_State();
-                        memcpy(&tx_packet[1], game_ptr, TOTAL_PIECES);
-                        tx_packet[51] = Calc_CRC(tx_packet, 51);
-                        HAL_UART_Transmit(&huart1, tx_packet, 52, 100);
-                    } else {
-                        // Send Error: [CMD] [0xFF] [CRC]
-                        tx_packet[0] = CMD_SHUFFLE;
-                        tx_packet[1] = 0xFF;
-                        tx_packet[2] = Calc_CRC(tx_packet, 2);
-                        HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
-                    }
-                }
-
-                // ------------------------------------------------
-                // COMMAND: SELECT (0x04)
-                // ------------------------------------------------
-                else if (cmd == CMD_SELECT)
-                {
-                    uint8_t status = cmd_select(data_byte);
-
-                    tx_packet[0] = CMD_SELECT;
-                    tx_packet[1] = status; // 0x00 OK, 0xFF Error
-                    tx_packet[2] = Calc_CRC(tx_packet, 2);
-                    HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
-                }
-
-                // ------------------------------------------------
-                // COMMAND: MATCH (0x05)
-                // ------------------------------------------------
-                else if (cmd == CMD_MATCH)
-                {
-                    uint8_t result = cmd_match(data_byte);
-
-                    tx_packet[0] = CMD_MATCH;
-                    tx_packet[1] = result; // 0x01 Match, 0x00 Fail
-                    tx_packet[2] = Calc_CRC(tx_packet, 2);
-                    HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
-                }
-                // ------------------------------------------------
-                // COMMAND: GIVE UP (0x07)
-                // ------------------------------------------------
-                else if (cmd == CMD_GIVE_UP)
-                {
-                	cmd_give_up();
-                    tx_packet[0] = CMD_GIVE_UP;
-                    tx_packet[1] = 0x07;
-                    tx_packet[2] = Calc_CRC(tx_packet, 2);
-                    HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
-
+                case CMD_RESET:
                     cmd_reset();
+                    break;
+
+                case CMD_SHUFFLE: {
+                    uint8_t res = cmd_shuffle();
+                    if (res == 0xFF) {
+                        tx_packet[1] = 0xFF; // Limit reached
+                    } else {
+                        memcpy(&tx_packet[1], Mahjong_Get_Board_State(), 50);
+                    }
+                    break;
                 }
 
-                else if (cmd == CMD_HINT)
-                        {
-                            uint8_t i1 = 0, i2 = 0;
-                            tx_packet[0] = CMD_HINT; // 0x08
+                case CMD_SELECT:
+                    tx_packet[1] = cmd_select(data);
+                    break;
 
-                            if (cmd_hint(&i1, &i2) == 1) {
-                                // Якщо знайшли - записуємо їхні реальні індекси (0-49)
-                                tx_packet[1] = i1;
-                                tx_packet[2] = i2;
-                            } else {
-                                // Якщо не знайшли - записуємо маркер 100
-                                tx_packet[1] = 100;
-                                tx_packet[2] = 100;
-                            }
+                case CMD_MATCH:
+                    tx_packet[1] = cmd_match(data);
+                    break;
 
-                            // Calculate CRC using the same function as other commands
-                            tx_packet[3] = Calc_CRC(tx_packet, 3);
-                            HAL_UART_Transmit(&huart1, tx_packet, 4, 100);
-                        }
+                case CMD_GIVE_UP:
+                    cmd_give_up();
+                    break;
 
-                else if (cmd == CMD_SET_NAME)
-                         {
-                           uint8_t name_len = data_byte;
+                case CMD_HINT: {
+                    uint8_t idx1, idx2;
+                    if (cmd_hint(&idx1, &idx2)) {
+                        tx_packet[1] = idx1;
+                        tx_packet[2] = idx2;
+                    } else {
+                        tx_packet[1] = 100; // No pairs left
+                    }
+                    break;
+                }
 
-                           if (name_len > 0 && name_len <= 10)
-                                {
-                                   uint8_t payload_buffer[12];
-
-                                   //Clear hardware overrun errors before reading
-                                   __HAL_UART_CLEAR_OREFLAG(&huart1);
-
-                                   if (HAL_UART_Receive(&huart1, payload_buffer, name_len + 1, 500) == HAL_OK)
-                                     {
-                                       uint8_t payload_crc = Calc_CRC(payload_buffer, name_len);
-                                       if (payload_crc == payload_buffer[name_len])
-                                          {
-                                            char temp_name[16];
-                                            memcpy(temp_name, payload_buffer, name_len);
-                                            temp_name[name_len] = '\0';
-
-                                            Mahjong_SetPlayerName(temp_name);
-
-                                            tx_packet[0] = CMD_SET_NAME;
-                                            tx_packet[1] = 0x00;
-                                            tx_packet[2] = Calc_CRC(tx_packet, 2);
-                                            HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                else if (cmd == CMD_GET_NAME)
-                  {
-                    char* saved_name = Mahjong_GetPlayerName();
-
-                     // Create a fixed 12-byte packet
-                     uint8_t tx_name_packet[12];
-                     memset(tx_name_packet, 0, 12); // Fill with nulls first
-
-                     tx_name_packet[0] = CMD_GET_NAME;
-
-                     // Copy up to 10 characters of the name into the packet
-                     strncpy((char*)&tx_name_packet[1], saved_name, 10);
-
-                     // Calculate CRC for the first 11 bytes
-                     tx_name_packet[11] = Calc_CRC(tx_name_packet, 11);
-
-                     HAL_UART_Transmit(&huart1, tx_name_packet, 12, 100);
-                   }
+                case CMD_GET_TIME: {
+                    uint32_t elapsed = Timer_GetSeconds();
+                    // Split 32-bit integer into 4 bytes (Big Endian)
+                    tx_packet[1] = (elapsed >> 24) & 0xFF;
+                    tx_packet[2] = (elapsed >> 16) & 0xFF;
+                    tx_packet[3] = (elapsed >> 8) & 0xFF;
+                    tx_packet[4] = elapsed & 0xFF;
+                    break;
+                }
             }
 
+            // Calculate outgoing CRC (over first 51 bytes)
+            tx_packet[51] = Calc_CRC(tx_packet, 51);
 
-
-            // Resume Listening
-            HAL_UART_Receive_IT(&huart1, rx_packet, 3);
+            // Determine transmit length based on command type to match Python expectation
+            // Python's CMD_START and CMD_SHUFFLE and CMD_GET_TIME expect 52 bytes
+            if (cmd == CMD_START || cmd == CMD_SHUFFLE || cmd == CMD_GET_TIME) {
+                HAL_UART_Transmit(&huart1, tx_packet, 52, 100);
+            }
+            // CMD_HINT expects 4 bytes
+            else if (cmd == CMD_HINT) {
+                tx_packet[3] = Calc_CRC(tx_packet, 3);
+                HAL_UART_Transmit(&huart1, tx_packet, 4, 100);
+            }
+            // All other commands expect 3 bytes
+            else {
+                tx_packet[2] = Calc_CRC(tx_packet, 2);
+                HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
+            }
         }
+
+        // Reset flag and re-enable interrupt to catch next command
+        packet_ready = 0;
+        HAL_UART_Receive_IT(&huart1, rx_packet, 3);
     }
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  }
   /* USER CODE END 3 */
 }
 
-// ... [Rest of your SystemClock_Config and MX functions remain unchanged] ...
 /**
- * TEST CLOCK
   * @brief System Clock Configuration
   * @retval None
   */
@@ -302,9 +233,6 @@ void SystemClock_Config(void)
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -317,8 +245,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -338,14 +264,70 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  // Based on 48MHz System Clock. 48MHz / 48000 = 1000 Hz. 1000 / 1000 = 1 Hz (1 Second)
+  htim2.Init.Prescaler = 47999;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+  /* Enable the TIM2 global Interrupt in the NVIC */
+  HAL_NVIC_SetPriority(TIM2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(TIM2_IRQn);
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
   */
 static void MX_USART1_UART_Init(void)
 {
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
+  huart1.Init.BaudRate = 115200; // Updated to match Python script
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -358,6 +340,10 @@ static void MX_USART1_UART_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
 }
 
 /**
@@ -368,6 +354,9 @@ static void MX_USART1_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -382,7 +371,27 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(G_LED_GPIO_Port, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* USER CODE END MX_GPIO_Init_2 */
 }
+
+/* USER CODE BEGIN 4 */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART1) {
+
+        // 1. Clear the hardware error flags
+        __HAL_UART_CLEAR_OREFLAG(huart); // Overrun
+        __HAL_UART_CLEAR_NEFLAG(huart);  // Noise
+        __HAL_UART_CLEAR_FEFLAG(huart);  // Framing
+
+        // 2. Restart the interrupt listener to catch the next 3 bytes safely
+        packet_ready = 0;
+        HAL_UART_Receive_IT(&huart1, rx_packet, 3);
+    }
+}
+/* USER CODE END 4 */
 
 /**
   * @brief  This function is executed in case of error occurrence.
@@ -390,23 +399,18 @@ static void MX_GPIO_Init(void)
   */
 void Error_Handler(void)
 {
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
+  /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  * where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
+#ifdef USE_FULL_ASSERT
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE BEGIN 6 */
+  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

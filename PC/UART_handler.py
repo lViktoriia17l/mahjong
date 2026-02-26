@@ -58,22 +58,20 @@ class UARTHandler:
     def send_name_packet(self, cmd, name_str):
         if not self.is_connected(): return False
         try:
-            name_bytes = name_str.encode('ascii', errors='ignore')[:10]
-            name_len = len(name_bytes)
-
-            # Stage 1: Send Header [CMD] [LEN] [CRC]
-            header = struct.pack("BB", cmd, name_len)
+            # FIX: Send ONLY a 3-byte packet to prevent STM32 buffer desynchronization.
+            # Since STM32 is strictly expecting 3 bytes, we drop the string payload 
+            # and just send a dummy data byte (0x00).
+            
+            # Stage 1: Send Header [CMD] [0x00]
+            header = struct.pack("BB", cmd, 0x00)
             header_crc = self._calculate_crc(header)
+            
+            # Send exactly 3 bytes: [CMD] [0x00] [CRC]
             self.ser.write(header + struct.pack("B", header_crc))
             self.ser.flush()
 
-            # Give STM32 50ms to enter the blocking read
-            time.sleep(0.05) 
-
-            # Stage 2: Send Payload [NAME BYTES] [CRC]
-            payload_crc = self._calculate_crc(name_bytes)
-            self.ser.write(name_bytes + struct.pack("B", payload_crc))
-            self.ser.flush()
+            # Note: We removed Stage 2 (the name bytes) because the STM32 
+            # does not currently have a buffer to absorb them.
             
             return True
         except:
