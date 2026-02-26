@@ -62,13 +62,6 @@ uint8_t Calc_CRC(uint8_t *data, uint8_t len) {
     return crc;
 }
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-    // Check if the interrupt came from TIM2
-    if (htim->Instance == TIM2) {
-        Timer_Tick(); // Increment our game seconds
-    }
-}
-
 /* --------- UART RX callback (Interrupt) --------- */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
@@ -112,7 +105,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   Mahjong_Init();
-  srand(HAL_GetTick());
+
 
   // Start the timer interrupt
   HAL_TIM_Base_Start_IT(&htim2);
