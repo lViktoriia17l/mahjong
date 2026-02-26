@@ -16,6 +16,7 @@
 
 // --- Private Variables ---
 static uint8_t board_state[TOTAL_PIECES];
+static char current_player_name[16] = "Player1";
 
 // --- Private Helper Functions ---
 static void add_tiles(uint8_t *index, uint8_t group, int start_val, int count, int copies) {
@@ -53,4 +54,14 @@ void Mahjong_Generate_New_Layout(void) {
 
 uint8_t* Mahjong_Get_Board_State(void) {
     return board_state;
+}
+
+void Mahjong_SetPlayerName(const char* name) {
+    // Copy the name and ensure it is null-terminated
+    strncpy(current_player_name, name, sizeof(current_player_name) - 1);
+    current_player_name[sizeof(current_player_name) - 1] = '\0';
+}
+
+char* Mahjong_GetPlayerName(void) {
+    return current_player_name;
 }

@@ -15,7 +15,9 @@
 #define CMD_MATCH     0x05
 #define CMD_GET_STATE 0x06
 #define CMD_GIVE_UP   0x07
-#define CMD_HINT 0x08
+#define CMD_HINT      0x08
+#define CMD_SET_NAME  0x09
+#define CMD_GET_NAME  0x0A
 // Tile Groups
 #define GRP_FLOWERS   0b101
 #define GRP_SEASONS   0b110
@@ -33,4 +35,7 @@ uint8_t cmd_match(uint8_t index);
 uint8_t cmd_hint(uint8_t *idx1, uint8_t *idx2);
 void cmd_give_up(void);
 
+// Game State Functions
+void Mahjong_SetPlayerName(const char* name);
+char* Mahjong_GetPlayerName(void);
 #endif
