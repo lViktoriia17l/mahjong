@@ -55,6 +55,31 @@ class UARTHandler:
             self.is_open = False
             return False
 
+    def send_name_packet(self, cmd, name_str):
+        if not self.is_connected(): return False
+        try:
+            name_bytes = name_str.encode('ascii', errors='ignore')[:10]
+            name_len = len(name_bytes)
+
+            # Stage 1: Send Header [CMD] [LEN] [CRC]
+            header = struct.pack("BB", cmd, name_len)
+            header_crc = self._calculate_crc(header)
+            self.ser.write(header + struct.pack("B", header_crc))
+            self.ser.flush()
+
+            # Give STM32 50ms to enter the blocking read
+            time.sleep(0.05) 
+
+            # Stage 2: Send Payload [NAME BYTES] [CRC]
+            payload_crc = self._calculate_crc(name_bytes)
+            self.ser.write(name_bytes + struct.pack("B", payload_crc))
+            self.ser.flush()
+            
+            return True
+        except:
+            self.is_open = False
+            return False
+
     def read_packet_strictly(self, count, timeout_sec=2.0):
 
         if not self.is_connected(): return None

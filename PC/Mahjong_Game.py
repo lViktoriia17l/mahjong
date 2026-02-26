@@ -11,6 +11,8 @@ CMD_SELECT = 0x04
 CMD_MATCH = 0x05
 CMD_GIVE_UP = 0x07
 CMD_HINT = 0x08
+CMD_SET_NAME = 0x09
+#CMD_GET_NAME = 0x0A For test only, not used in main flow
 PACKET_SIZE = 52  # 50 тайлів + 1 байт CMD + 1 байт CRC
 TILE_W, TILE_H, SHADOW_OFFSET = 50, 65, 4
 
@@ -56,27 +58,64 @@ class MainMenu(tk.Frame):
         else: self.port_var.set("No Ports Found")
 
     def send_player_name(self, name):
-        """
-        PLACEHOLDER: Handle the entered name.
-        You can format this into a new UART packet (e.g., CMD_SET_NAME = 0x09) 
-        to send the string to the STM32, or just save it locally for a leaderboard.
-        """
-        self.log(f"Registered player name: {name}")
+        self.log(f"Registering player name: {name}")
+        self.controller.uart.reset_buffer()
         
-        # Example for future UART implementation (requires updating UARTHandler to send variable length arrays):
-        # byte_name = name.encode('ascii')[:10] # Limit to 10 chars
-        # self.controller.uart.send_packet(CMD_SET_NAME, byte_name)
+        if self.controller.uart.send_name_packet(CMD_SET_NAME, name):
+            # Wait for 3-byte ACK from STM32
+            resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+            if resp and resp[0] == CMD_SET_NAME and resp[1] == 0x00:
+                self.log(f"Name '{name}' successfully saved to STM32 RAM.")
+            else:
+                self.log("Warning: STM32 did not acknowledge the name.")
+        else:
+            self.log("Failed to send name packet.")
+
+    """def verify_name_in_ram(self):
+        self.log("Requesting name back from STM32 RAM...")
+        self.controller.uart.reset_buffer()
+        
+        # Send the request
+        if self.controller.uart.send_packet(CMD_GET_NAME, 0x00):
+            # Read the 12-byte fixed response
+            resp = self.controller.uart.read_packet_strictly(12, timeout_sec=1.5)
+            
+            if resp and resp[0] == CMD_GET_NAME:
+                # Decode bytes 1 through 10, stripping out the null padding
+                saved_name = resp[1:11].decode('ascii', errors='ignore').strip('\x00')
+                self.log(f"SUCCESS: STM32 RAM currently holds: '{saved_name}'")
+            else:
+                self.log("Failed to read name back from RAM.")
+        else:
+            self.log("Failed to send CMD_GET_NAME request.")"""
 
     def connect(self):
         self.log("Attempting to connect...")
         port = self.port_var.get()
+        
+        # 1. Grab the name from the text entry
+        name = self.player_name_var.get().strip()
+
+        # 2. Make sure they didn't leave it blank
+        if not name:
+            messagebox.showwarning("Input Error", "Please enter a player name!")
+            return
+
         if not port or port == "No Ports Found": 
             self.log("No port selected or available.")
             return
+            
         self.controller.uart.port_name = port
         if self.controller.uart.open_port():
             self.log(f"Connected to {port}")
             self.controller.uart.dtr_reset()
+            
+            # 3. Send Player's Name
+            self.send_player_name(name)
+            
+            # 4. Save it to the game view (optional, for victory screens later)
+            self.controller.game_view.player_name = name 
+            
             self.controller.show_game()
         else:
             self.log(f"Failed to connect to {port}")

@@ -25,6 +25,8 @@
 #define CMD_GET_STATE 0x06
 #define CMD_GIVE_UP 0x07
 #define CMD_HINT 0x08
+#define CMD_SET_NAME 0x09
+#define CMD_GET_NAME 0x0A
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -227,7 +229,60 @@ int main(void)
                             tx_packet[3] = Calc_CRC(tx_packet, 3);
                             HAL_UART_Transmit(&huart1, tx_packet, 4, 100);
                         }
+
+                else if (cmd == CMD_SET_NAME)
+                         {
+                           uint8_t name_len = data_byte;
+
+                           if (name_len > 0 && name_len <= 10)
+                                {
+                                   uint8_t payload_buffer[12];
+
+                                   //Clear hardware overrun errors before reading
+                                   __HAL_UART_CLEAR_OREFLAG(&huart1);
+
+                                   if (HAL_UART_Receive(&huart1, payload_buffer, name_len + 1, 500) == HAL_OK)
+                                     {
+                                       uint8_t payload_crc = Calc_CRC(payload_buffer, name_len);
+                                       if (payload_crc == payload_buffer[name_len])
+                                          {
+                                            char temp_name[16];
+                                            memcpy(temp_name, payload_buffer, name_len);
+                                            temp_name[name_len] = '\0';
+
+                                            Mahjong_SetPlayerName(temp_name);
+
+                                            tx_packet[0] = CMD_SET_NAME;
+                                            tx_packet[1] = 0x00;
+                                            tx_packet[2] = Calc_CRC(tx_packet, 2);
+                                            HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                else if (cmd == CMD_GET_NAME)
+                  {
+                    char* saved_name = Mahjong_GetPlayerName();
+
+                     // Create a fixed 12-byte packet
+                     uint8_t tx_name_packet[12];
+                     memset(tx_name_packet, 0, 12); // Fill with nulls first
+
+                     tx_name_packet[0] = CMD_GET_NAME;
+
+                     // Copy up to 10 characters of the name into the packet
+                     strncpy((char*)&tx_name_packet[1], saved_name, 10);
+
+                     // Calculate CRC for the first 11 bytes
+                     tx_name_packet[11] = Calc_CRC(tx_name_packet, 11);
+
+                     HAL_UART_Transmit(&huart1, tx_name_packet, 12, 100);
+                   }
             }
+
+
+
             // Resume Listening
             HAL_UART_Receive_IT(&huart1, rx_packet, 3);
         }
