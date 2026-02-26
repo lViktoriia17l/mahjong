@@ -111,7 +111,7 @@ class MainMenu(tk.Frame):
             self.controller.uart.dtr_reset()
             
             # 3. Send Player's Name
-            self.send_player_name(name)
+            #self.send_player_name(name)
             
             # 4. Save it to the game view (optional, for victory screens later)
             self.controller.game_view.player_name = name 
@@ -124,6 +124,7 @@ class MainMenu(tk.Frame):
 # --- ІНТЕРФЕЙС ГРИ ---
 class GameInterface(tk.Frame):
     def __init__(self, parent, controller):
+        self.timer_active = False
         super().__init__(parent)
         self.controller = controller
         self.current_board_data = None
@@ -132,6 +133,12 @@ class GameInterface(tk.Frame):
         self.error_tiles = []
         self.shuffles_left = 5
         self.hint_tiles = []
+        
+        # Create info frame before adding timer label
+        self.info_frame = tk.Frame(self, bg="#f0f0f0")
+        self.info_frame.pack(fill=tk.X)
+        self.timer_label = tk.Label(self.info_frame, text="Time: 00:00", font=("Arial", 12, "bold"), bg="#f0f0f0")
+        self.timer_label.pack(side="left", padx=20)
 
         toolbar = tk.Frame(self, bg="#ddd", pady=10)
         toolbar.pack(fill=tk.X)
@@ -153,6 +160,7 @@ class GameInterface(tk.Frame):
         
     def exit_to_menu(self):
         self.log("Exiting to menu...")
+        self.timer_active = False # Stop the clock polling
         self.controller.uart.close_port()
         self.controller.show_menu()
 
@@ -186,6 +194,7 @@ class GameInterface(tk.Frame):
     # --- КОМАНДИ З ТАЙМАУТАМИ ---
     def send_reset_command(self):
         self.log("CMD_RESET sent")
+        self.timer_active = False # Stop the clock during reset
         self.controller.uart.reset_buffer()
         if not self.controller.uart.send_packet(CMD_RESET, 0x00):
             self.log("Failed to send CMD_RESET")
@@ -203,19 +212,25 @@ class GameInterface(tk.Frame):
     def send_start_command(self):
         self.log("CMD_START sent - Waiting for board...")
         self.controller.uart.reset_buffer()
+        
         if not self.controller.uart.send_packet(CMD_START, 0x00):
             self.log("Failed to send CMD_START")
             self.handle_error(self.send_start_command)
             return
         
-        # Чекаємо 5 секунд на генерацію
+        # THIS IS THE LINE THAT WAS MISSING:
         resp = self.controller.uart.read_packet_strictly(PACKET_SIZE, timeout_sec=10.0)
+        
         valid, payload = self.validate_response(CMD_START, resp, 51)
         if valid:
             self.log("Board received successfully!")
             self.selected_index = None
             self.update_shuffle_counter(5)
             self.draw_pyramid(payload[1:])
+            
+            # Start the clock safely AFTER the board is loaded
+            self.timer_active = True
+            self.update_clock()
         else:
             self.log("Failed to receive valid board after CMD_START")
             self.handle_error(self.send_start_command)
@@ -249,6 +264,8 @@ class GameInterface(tk.Frame):
             else:
                 self.log("Failed to receive valid response after CMD_SHUFFLE")
                 self.handle_error(self.send_shuffle_command)
+
+    
 
     def send_select_command(self, index):
         self.log(f"CMD_SELECT sent for index {index}")
@@ -377,6 +394,21 @@ class GameInterface(tk.Frame):
         # Кнопка "В меню"
         tk.Button(btn_frame, text="Menu", width=10, bg="#607D8B", fg="white",
                   command=lambda: [popup.destroy(), self.exit_to_menu()]).pack(side=tk.LEFT, padx=5)
+        
+    def update_clock(self):
+        if not self.timer_active:
+            return # Stop the loop if the game isn't active
+            
+        elapsed_seconds = self.controller.get_timer_from_stm32()
+        
+        if elapsed_seconds is not None:
+            mins = elapsed_seconds // 60
+            secs = elapsed_seconds % 60
+            self.timer_label.config(text=f"Time: {mins:02d}:{secs:02d}")
+            print(f"[DEBUG] STM32 Clock: {elapsed_seconds}s")
+        
+        # Schedule the next update in 1000ms
+        self.after(1000, self.update_clock)
 
     # --- ВІЗУАЛІЗАЦІЯ (БЕЗ ЗМІН) ---
     def update_shuffle_counter(self, count):
@@ -485,6 +517,27 @@ class MahjongApp(tk.Tk):
         self.game_view.pack(fill="both", expand=True)
         self.after(1000, self.game_view.send_reset_command)
 
+    def get_timer_from_stm32(self):
+        if not self.uart.is_connected():
+            return None
+            
+        self.uart.reset_buffer()
+        
+        # 1. Send EXACTLY 3 bytes via send_packet (0x0B, 0x00, CRC)
+        if self.uart.send_packet(0x0B, 0x00):
+            
+            # 2. Read the 52-byte padded response from STM32
+            raw_response = self.uart.read_packet_strictly(52, timeout_sec=1.0)
+            
+            if raw_response and len(raw_response) == 51: # 51 bytes payload + 1 byte CRC (stripped)
+                if raw_response[0] == 0x0B:
+                    time_bytes = raw_response[1:5]
+                    seconds = int.from_bytes(time_bytes, byteorder='big')
+                    return seconds
+                    
+        print("[DEBUG] Failed to get time packet")
+        return None
+    
 if __name__ == "__main__":
     app = MahjongApp()
     app.mainloop()
