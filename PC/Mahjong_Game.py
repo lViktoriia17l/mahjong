@@ -3,7 +3,7 @@ from tkinter import ttk, messagebox
 import time
 from UART_handler import UARTHandler
 
-# --- КОНФІГУРАЦІЯ ---
+# --- CONFIGURATION ---
 CMD_START = 0x01
 CMD_RESET = 0x02
 CMD_SHUFFLE = 0x03
@@ -12,8 +12,9 @@ CMD_MATCH = 0x05
 CMD_GIVE_UP = 0x07
 CMD_HINT = 0x08
 CMD_SET_NAME = 0x09
-#CMD_GET_NAME = 0x0A For test only, not used in main flow
-PACKET_SIZE = 52  # 50 тайлів + 1 байт CMD + 1 байт CRC
+CMD_GET_TIME = 0x0B
+
+PACKET_SIZE = 52  # 50 tiles + 1 byte CMD + 1 byte CRC
 TILE_W, TILE_H, SHADOW_OFFSET = 50, 65, 4
 
 TILE_GROUPS = {
@@ -21,7 +22,7 @@ TILE_GROUPS = {
     3: ("Winds", "#BDBDBD"), 4: ("Dragons", "#FFEE58"), 5: ("Flowers", "#AB47BC"), 6: ("Seasons", "#FFA726")
 }
 
-# --- ГОЛОВНЕ МЕНЮ ---
+# --- MAIN MENU ---
 class MainMenu(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#f0f0f0")
@@ -31,7 +32,6 @@ class MainMenu(tk.Frame):
         self.lbl_status = tk.Label(self, text="Ready", font=("Arial", 10, "italic"), bg="#f0f0f0")
         self.lbl_status.pack(pady=(0, 20))
 
-        # Player Name Entry
         frame_name = tk.Frame(self, bg="#f0f0f0")
         frame_name.pack(pady=(10, 20))
         tk.Label(frame_name, text="Player Name: (Up to 10 characters)", font=("Arial", 12), bg="#f0f0f0").grid(row=0, column=0, padx=5)
@@ -57,46 +57,11 @@ class MainMenu(tk.Frame):
         if ports: self.combo_ports.current(0)
         else: self.port_var.set("No Ports Found")
 
-    def send_player_name(self, name):
-        self.log(f"Registering player name: {name}")
-        self.controller.uart.reset_buffer()
-        
-        if self.controller.uart.send_name_packet(CMD_SET_NAME, name):
-            # Wait for 3-byte ACK from STM32
-            resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
-            if resp and resp[0] == CMD_SET_NAME and resp[1] == 0x00:
-                self.log(f"Name '{name}' successfully saved to STM32 RAM.")
-            else:
-                self.log("Warning: STM32 did not acknowledge the name.")
-        else:
-            self.log("Failed to send name packet.")
-
-    """def verify_name_in_ram(self):
-        self.log("Requesting name back from STM32 RAM...")
-        self.controller.uart.reset_buffer()
-        
-        # Send the request
-        if self.controller.uart.send_packet(CMD_GET_NAME, 0x00):
-            # Read the 12-byte fixed response
-            resp = self.controller.uart.read_packet_strictly(12, timeout_sec=1.5)
-            
-            if resp and resp[0] == CMD_GET_NAME:
-                # Decode bytes 1 through 10, stripping out the null padding
-                saved_name = resp[1:11].decode('ascii', errors='ignore').strip('\x00')
-                self.log(f"SUCCESS: STM32 RAM currently holds: '{saved_name}'")
-            else:
-                self.log("Failed to read name back from RAM.")
-        else:
-            self.log("Failed to send CMD_GET_NAME request.")"""
-
     def connect(self):
         self.log("Attempting to connect...")
         port = self.port_var.get()
-        
-        # 1. Grab the name from the text entry
         name = self.player_name_var.get().strip()
 
-        # 2. Make sure they didn't leave it blank
         if not name:
             messagebox.showwarning("Input Error", "Please enter a player name!")
             return
@@ -109,24 +74,18 @@ class MainMenu(tk.Frame):
         if self.controller.uart.open_port():
             self.log(f"Connected to {port}")
             self.controller.uart.dtr_reset()
-            
-            # 3. Send Player's Name
-            #self.send_player_name(name)
-            
-            # 4. Save it to the game view (optional, for victory screens later)
             self.controller.game_view.player_name = name 
-            
             self.controller.show_game()
         else:
             self.log(f"Failed to connect to {port}")
             messagebox.showerror("Error", "Could not open port!")
 
-# --- ІНТЕРФЕЙС ГРИ ---
+# --- GAME INTERFACE ---
 class GameInterface(tk.Frame):
     def __init__(self, parent, controller):
-        self.timer_active = False
         super().__init__(parent)
         self.controller = controller
+        self.timer_active = False
         self.current_board_data = None
         self.hitboxes = []
         self.selected_index = None
@@ -134,7 +93,6 @@ class GameInterface(tk.Frame):
         self.shuffles_left = 5
         self.hint_tiles = []
         
-        # Create info frame before adding timer label
         self.info_frame = tk.Frame(self, bg="#f0f0f0")
         self.info_frame.pack(fill=tk.X)
         self.timer_label = tk.Label(self.info_frame, text="Time: 00:00", font=("Arial", 12, "bold"), bg="#f0f0f0")
@@ -160,11 +118,12 @@ class GameInterface(tk.Frame):
         
     def exit_to_menu(self):
         self.log("Exiting to menu...")
-        self.timer_active = False # Stop the clock polling
+        self.timer_active = False 
         self.controller.uart.close_port()
         self.controller.show_menu()
 
     def handle_error(self, retry_func, *args):
+        self.controller.uart_busy = False # Release lock on error
         self.log("Communication error! Opening dialog...")
         answer = messagebox.askretrycancel(
             "Connection Lost", 
@@ -182,26 +141,23 @@ class GameInterface(tk.Frame):
             self.exit_to_menu()
     
     def validate_response(self, cmd_sent, response, expected_size):
-        self.log(f"Received response: {response}")
-        if not response:
-            return False, None
-        if response[0] != cmd_sent:
-            return False, None
-        if len(response) != expected_size:
+        if not response or response[0] != cmd_sent or len(response) != expected_size:
             return False, None
         return True, response
 
-    # --- КОМАНДИ З ТАЙМАУТАМИ ---
     def send_reset_command(self):
         self.log("CMD_RESET sent")
-        self.timer_active = False # Stop the clock during reset
+        self.timer_active = False 
+        self.controller.uart_busy = True
         self.controller.uart.reset_buffer()
+        
         if not self.controller.uart.send_packet(CMD_RESET, 0x00):
-            self.log("Failed to send CMD_RESET")
             self.handle_error(self.send_reset_command)
             return
         
         resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+        self.controller.uart_busy = False
+        
         if self.validate_response(CMD_RESET, resp, 2)[0]:
             self.log("CMD_RESET acknowledged - Waiting for board...")
             self.after(500, self.send_start_command)
@@ -211,15 +167,15 @@ class GameInterface(tk.Frame):
 
     def send_start_command(self):
         self.log("CMD_START sent - Waiting for board...")
+        self.controller.uart_busy = True
         self.controller.uart.reset_buffer()
         
         if not self.controller.uart.send_packet(CMD_START, 0x00):
-            self.log("Failed to send CMD_START")
             self.handle_error(self.send_start_command)
             return
         
-        # THIS IS THE LINE THAT WAS MISSING:
         resp = self.controller.uart.read_packet_strictly(PACKET_SIZE, timeout_sec=10.0)
+        self.controller.uart_busy = False
         
         valid, payload = self.validate_response(CMD_START, resp, 51)
         if valid:
@@ -228,7 +184,6 @@ class GameInterface(tk.Frame):
             self.update_shuffle_counter(5)
             self.draw_pyramid(payload[1:])
             
-            # Start the clock safely AFTER the board is loaded
             self.timer_active = True
             self.update_clock()
         else:
@@ -237,25 +192,23 @@ class GameInterface(tk.Frame):
 
     def send_shuffle_command(self):
         self.log("CMD_SHUFFLE sent")
+        self.controller.uart_busy = True
         self.controller.uart.reset_buffer()
+        
         if not self.controller.uart.send_packet(CMD_SHUFFLE, 0x00):
-            self.log("Failed to send CMD_SHUFFLE")
             self.handle_error(self.send_shuffle_command)
             return
 
-        # Спочатку намагаємося прочитати як повну дошку (52 байти)
         resp = self.controller.uart.read_packet_strictly(PACKET_SIZE, timeout_sec=4.0)
+        self.controller.uart_busy = False
         
-        if resp and len(resp) == 51: # Успіх
+        if resp and len(resp) == 51: 
             self.log("New board received after shuffle")
             self.update_shuffle_counter(self.shuffles_left - 1)
             self.selected_index = None
             self.draw_pyramid(resp[1:])
             self.check_game_over()
         else:
-            # Якщо дошка не прийшла, можливо це помилка ліміту (0xFF)
-            # Перевіримо буфер на 3-байтову відповідь
-            self.log("No full board received, checking for shuffle limit response...")
             if resp and len(resp) == 2 and resp[1] == 0xFF:
                 self.check_game_over()
                 self.log("Shuffle limit reached")
@@ -265,45 +218,43 @@ class GameInterface(tk.Frame):
                 self.log("Failed to receive valid response after CMD_SHUFFLE")
                 self.handle_error(self.send_shuffle_command)
 
-    
-
     def send_select_command(self, index):
         self.log(f"CMD_SELECT sent for index {index}")
+        self.controller.uart_busy = True
         self.controller.uart.reset_buffer()
+        
         if not self.controller.uart.send_packet(CMD_SELECT, index):
-            self.log("Failed to send CMD_SELECT")
             self.handle_error(self.send_select_command, index)
             return
         
         resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+        self.controller.uart_busy = False
+        
         valid, payload = self.validate_response(CMD_SELECT, resp, 2)
         if valid:
-            self.log(f"CMD_SELECT response: {payload[1]}")
             if payload[1] == 0x00:
-                self.log(f"Tile at index {index} is selectable")
                 self.selected_index = index
                 self.draw_pyramid(self.current_board_data)
             else:
-                self.log(f"Tile at index {index} is NOT selectable")
                 self.show_error_blink([index])
         else:
-            self.log("Failed to receive valid response after CMD_SELECT")
             self.handle_error(self.send_select_command, index)
 
     def send_match_command(self, index):
-        self.log(f"CMD_MATCH sent for index {index} with selected index {self.selected_index}")
+        self.log(f"CMD_MATCH sent for index {index}")
+        self.controller.uart_busy = True
         self.controller.uart.reset_buffer()
+        
         if not self.controller.uart.send_packet(CMD_MATCH, index):
-            self.log("Failed to send CMD_MATCH")
             self.handle_error(self.send_match_command, index)
             return
         
         resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+        self.controller.uart_busy = False
+        
         valid, payload = self.validate_response(CMD_MATCH, resp, 2)
         if valid:
-            self.log(f"CMD_MATCH response: {payload[1]}")
-            if payload[1] == 0x01: # Match
-                self.log(f"Tiles at indices {self.selected_index} and {index} matched and removed")
+            if payload[1] == 0x01: 
                 temp_board = bytearray(self.current_board_data)
                 temp_board[self.selected_index] = 0x00
                 temp_board[index] = 0x00
@@ -311,116 +262,105 @@ class GameInterface(tk.Frame):
                 self.selected_index = None
                 self.draw_pyramid(self.current_board_data)
                 self.check_game_over()
-                if all(val == 0 for val in self.current_board_data): #я
+                if all(val == 0 for val in self.current_board_data): 
+                    self.timer_active = False # Stop clock on win
                     self.after(500, lambda: self.show_end_game_popup("VICTORY!", "You cleared the board!", "#2E7D32"))
             else:
-                self.log(f"Tiles at indices {self.selected_index} and {index} do NOT match")
                 old_idx = self.selected_index
                 self.selected_index = None
                 self.show_error_blink([old_idx, index])
         else:
-            self.log("Failed to receive valid response after CMD_MATCH")
             self.handle_error(self.send_match_command, index)
 
     def request_hint(self):
         self.log("CMD_HINT sent")
+        self.controller.uart_busy = True
         self.controller.uart.reset_buffer()
+        
         if not self.controller.uart.send_packet(CMD_HINT, 0x00):
-            self.log("Failed to send CMD_HINT")
             self.handle_error(self.request_hint)
             return
 
         resp = self.controller.uart.read_packet_strictly(4, timeout_sec=1.5)
+        self.controller.uart_busy = False
+        
         valid, payload = self.validate_response(CMD_HINT, resp, 3)
         if valid:
-            self.log(f"CMD_HINT response: {payload[1]}, {payload[2]}")
             idx1, idx2 = payload[1], payload[2]
             if idx1 == 100:
-                self.log("No pairs left for hint")
                 messagebox.showinfo("Hint", "No pairs left!")
             else:
-                self.log(f"Indices available {idx1} and {idx2}")
                 self.show_hint_blink([idx1, idx2])
         else:
-            self.log("Failed to receive valid response after CMD_HINT")
             self.handle_error(self.request_hint)
 
     def send_giveup_command(self):
-        self.log("CMD_GIVE_UP sent")
+        self.timer_active = False
+        self.controller.uart_busy = True
         self.controller.uart.reset_buffer()
+        
         if self.controller.uart.send_packet(CMD_GIVE_UP, 0x00):
-            self.log("CMD_GIVE_UP sent successfully, waiting for response...")
             resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+            self.controller.uart_busy = False
             if resp: self.exit_to_menu()
         else:
-            self.log("Failed to send CMD_GIVE_UP")
             self.handle_error(self.send_giveup_command)
 
     def check_game_over(self):
-        # Якщо є спроби перемішування - гра продовжується
-        if self.shuffles_left > 0:
-            return
+        if self.shuffles_left > 0: return
 
-        # Якщо спроб немає, запитуємо STM32, чи є ще ходи (викликаємо CMD_HINT)
+        self.controller.uart_busy = True
         self.controller.uart.reset_buffer()
+        
         if self.controller.uart.send_packet(CMD_HINT, 0x00):
             resp = self.controller.uart.read_packet_strictly(4, timeout_sec=1.5)
+            self.controller.uart_busy = False
             valid, payload = self.validate_response(CMD_HINT, resp, 3)
-            if valid and payload[1] == 100: # 100 означає "No pairs left" в твоєму С-коді
+            if valid and payload[1] == 100: 
+                self.timer_active = False # Stop clock on lose
                 self.show_end_game_popup("GAME OVER", "No moves left & no shuffles.", "#D32F2F")
 
-    # final screen of win/lose
     def show_end_game_popup(self, title, message, color):
-        # Створюємо нове вікно поверх основного
         popup = tk.Toplevel(self)
         popup.title(title)
         popup.geometry("300x200")
         popup.configure(bg="#f0f0f0")
-        
-        # Робимо його модальним (блокуємо основне вікно)
         popup.grab_set()
         
-        # Текст повідомлення
         tk.Label(popup, text=title, font=("Arial", 18, "bold"), fg=color, bg="#f0f0f0").pack(pady=10)
         tk.Label(popup, text=message, font=("Arial", 10), bg="#f0f0f0").pack(pady=5)
-        
         btn_frame = tk.Frame(popup, bg="#f0f0f0")
         btn_frame.pack(pady=20)
         
-        # Кнопка "Спробувати знову"
         tk.Button(btn_frame, text="Retry", width=10, bg="#4CAF50", fg="white",
                   command=lambda: [popup.destroy(), self.send_reset_command()]).pack(side=tk.LEFT, padx=5)
-        
-        # Кнопка "В меню"
         tk.Button(btn_frame, text="Menu", width=10, bg="#607D8B", fg="white",
                   command=lambda: [popup.destroy(), self.exit_to_menu()]).pack(side=tk.LEFT, padx=5)
         
     def update_clock(self):
         if not self.timer_active:
-            return # Stop the loop if the game isn't active
+            return 
             
-        elapsed_seconds = self.controller.get_timer_from_stm32()
+        #Lock: If UART is busy drawing the board or clicking tiles, skip this second.
+        if not self.controller.uart_busy:
+            elapsed_seconds = self.controller.get_timer_from_stm32()
+            
+            if elapsed_seconds is not None:
+                mins = elapsed_seconds // 60
+                secs = elapsed_seconds % 60
+                self.timer_label.config(text=f"Time: {mins:02d}:{secs:02d}")
         
-        if elapsed_seconds is not None:
-            mins = elapsed_seconds // 60
-            secs = elapsed_seconds % 60
-            self.timer_label.config(text=f"Time: {mins:02d}:{secs:02d}")
-            print(f"[DEBUG] STM32 Clock: {elapsed_seconds}s")
-        
-        # Schedule the next update in 1000ms
         self.after(1000, self.update_clock)
 
-    # --- ВІЗУАЛІЗАЦІЯ (БЕЗ ЗМІН) ---
     def update_shuffle_counter(self, count):
         self.shuffles_left = max(0, count)
         self.lbl_shuffles.config(text=f"Attempts: {self.shuffles_left}", fg="red" if self.shuffles_left == 0 else "black")
         self.btn_shuffle.config(state="disabled" if self.shuffles_left == 0 else "normal")
 
     def on_canvas_click(self, event):
-        self.log(f"Canvas clicked at ({event.x}, {event.y})")
-        if not self.current_board_data:
-            self.log("No board data available")
-            return
+        if not self.current_board_data or self.controller.uart_busy:
+            return # Ignore clicks if the line is busy!
+            
         clicked_idx = -1
         for hb in reversed(self.hitboxes):
             x1, y1, x2, y2, idx = hb
@@ -429,14 +369,11 @@ class GameInterface(tk.Frame):
         if clicked_idx == -1: return
         
         if self.selected_index is None:
-            self.log(f"Tile at index {clicked_idx} clicked - sending select command")
             self.send_select_command(clicked_idx)
         elif clicked_idx == self.selected_index:
-            self.log(f"Tile at index {clicked_idx} deselected")
             self.selected_index = None
             self.draw_pyramid(self.current_board_data)
         else:
-            self.log(f"Tile at index {clicked_idx} clicked - sending match command with selected index {self.selected_index}")
             self.send_match_command(clicked_idx)
 
     def show_error_blink(self, indices):
@@ -494,13 +431,14 @@ class GameInterface(tk.Frame):
         for r in range(3):
             for c in range(3): draw_tile(i, c, r, 2, 1, 1); i += 1
 
-# --- ДОДАТОК ---
+# --- APP CONTROLLER ---
 class MahjongApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("STM32 Mahjong")
         self.geometry("900x750")
         self.uart = UARTHandler()
+        self.uart_busy = False # UART Lock to prevent ghost packets
         self.container = tk.Frame(self)
         self.container.pack(fill="both", expand=True)
         self.menu_view = MainMenu(self.container, self)
@@ -521,21 +459,20 @@ class MahjongApp(tk.Tk):
         if not self.uart.is_connected():
             return None
             
+        self.uart_busy = True # Lock UART while checking time
         self.uart.reset_buffer()
         
-        # 1. Send EXACTLY 3 bytes via send_packet (0x0B, 0x00, CRC)
-        if self.uart.send_packet(0x0B, 0x00):
+        if self.uart.send_packet(CMD_GET_TIME, 0x00):
+            raw_response = self.uart.read_packet_strictly(52, timeout_sec=0.5)
+            self.uart_busy = False # Release Lock
             
-            # 2. Read the 52-byte padded response from STM32
-            raw_response = self.uart.read_packet_strictly(52, timeout_sec=1.0)
-            
-            if raw_response and len(raw_response) == 51: # 51 bytes payload + 1 byte CRC (stripped)
-                if raw_response[0] == 0x0B:
+            if raw_response and len(raw_response) == 51: 
+                if raw_response[0] == CMD_GET_TIME:
                     time_bytes = raw_response[1:5]
                     seconds = int.from_bytes(time_bytes, byteorder='big')
                     return seconds
                     
-        print("[DEBUG] Failed to get time packet")
+        self.uart_busy = False # Release Lock on fail
         return None
     
 if __name__ == "__main__":

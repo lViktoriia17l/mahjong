@@ -22,6 +22,7 @@
 #include "stm32f0xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "mahjong.h" // Added to access Timer_Tick()
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -62,7 +63,7 @@ extern UART_HandleTypeDef huart1;
 /* USER CODE END EV */
 
 /******************************************************************************/
-/*           Cortex-M0 Processor Interruption and Exception Handlers          */
+/* Cortex-M0 Processor Interruption and Exception Handlers          */
 /******************************************************************************/
 /**
   * @brief This function handles Non maskable interrupt.
@@ -147,7 +148,18 @@ void SysTick_Handler(void)
 void TIM2_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM2_IRQn 0 */
+  // 1. Check the Status Register (SR) to see if the Update Interrupt Flag (UIF) triggered
+  if (TIM2->SR & TIM_SR_UIF)
+  {
+      // 2. CLEAR the flag immediately so the interrupt doesn't loop infinitely
+      TIM2->SR &= ~TIM_SR_UIF;
 
+      // 3. Trigger your game logic directly
+      Timer_Tick();
+  }
+
+  // 4. Return immediately to skip the bloated HAL library check
+  return;
   /* USER CODE END TIM2_IRQn 0 */
   HAL_TIM_IRQHandler(&htim2);
   /* USER CODE BEGIN TIM2_IRQn 1 */
