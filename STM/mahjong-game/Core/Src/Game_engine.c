@@ -39,7 +39,7 @@ void Mahjong_Init(void) {
 }
 
 void Mahjong_Generate_New_Layout(void) {
-    int idx = 0;
+    uint8_t idx = 0;
 
     // 1. Fill Deck
     add_tiles(&idx, GRP_BAMBOO, 1, 6, 4);

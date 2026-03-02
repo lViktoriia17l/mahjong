@@ -1,5 +1,6 @@
 "./Core/Src/Game_engine.o"
 "./Core/Src/command_list.o"
+"./Core/Src/game_save.o"
 "./Core/Src/main.o"
 "./Core/Src/protocol.o"
 "./Core/Src/stm32f0xx_hal_msp.o"

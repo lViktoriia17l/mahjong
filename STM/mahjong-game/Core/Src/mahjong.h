@@ -8,17 +8,18 @@
 #define TOTAL_PIECES 50
 
 // Commands
-#define CMD_START     0x01
-#define CMD_RESET     0x02
-#define CMD_SHUFFLE   0x03
-#define CMD_SELECT    0x04
-#define CMD_MATCH     0x05
-#define CMD_GET_STATE 0x06
-#define CMD_GIVE_UP   0x07
-#define CMD_HINT      0x08
-#define CMD_SET_NAME  0x09
-#define CMD_GET_NAME  0x0A
-#define CMD_GET_TIME  0x0B
+#define CMD_START		0x01
+#define CMD_RESET		0x02
+#define CMD_SHUFFLE		0x03
+#define CMD_SELECT		0x04
+#define CMD_MATCH		0x05
+#define CMD_GET_STATE	0x06
+#define CMD_GIVE_UP		0x07
+#define CMD_HINT		0x08
+#define CMD_SET_NAME	0x09
+#define CMD_GET_NAME	0x0A
+#define CMD_GET_TIME	0x0B
+#define CMD_GET_LEADERS	0x0C
 // Tile Groups
 #define GRP_FLOWERS   0b101
 #define GRP_SEASONS   0b110
@@ -58,4 +59,11 @@ uint32_t Mahjong_Get_Elapsed_Seconds(void);
 void Timer_Start(void);
 uint32_t Timer_GetSeconds(void);
 void Timer_Tick(void);
+
+extern HighScore leaderboard[MAX_SCORES];
+
+void Load_HighScores(void);
+void Save_HighScores(void);
+void Add_HighScore(const char* new_name, uint32_t new_time);
+
 #endif
