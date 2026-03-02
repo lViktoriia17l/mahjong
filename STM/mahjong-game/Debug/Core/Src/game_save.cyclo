@@ -1,0 +1,3 @@
+../Core/Src/game_save.c:10:6:Load_HighScores	3
+../Core/Src/game_save.c:25:6:Save_HighScores	3
+../Core/Src/game_save.c:51:6:Add_HighScore	5
