@@ -161,14 +161,31 @@ uint8_t cmd_match(uint8_t index) {
     }
 
     if (is_match) {
-        board[active_selection] = 0x00;
-        board[index] = 0x00;
-        active_selection = -1;
-        return 0x01;
-    } else {
-        active_selection = -1;
-        return 0x00;
-    }
+            board[active_selection] = 0x00;
+            board[index] = 0x00;
+            active_selection = -1;
+
+            // New win check logic
+            uint8_t game_won = 1;
+            for(int i = 0; i < TOTAL_PIECES; i++) {
+                if(board[i] != 0x00) {
+                    game_won = 0; // Found a tile, game is not over
+                    break;
+                }
+            }
+
+            if (game_won) {
+                // Stop the timer and save the score!
+                uint32_t final_time = Timer_GetSeconds();
+                char* player_name = Mahjong_GetPlayerName();
+                Add_HighScore(player_name, final_time);
+            }
+
+            return 0x01;
+        } else {
+            active_selection = -1;
+            return 0x00;
+        }
 }
 
 uint8_t cmd_hint(uint8_t *idx1, uint8_t *idx2) {

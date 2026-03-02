@@ -105,6 +105,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   Mahjong_Init();
+  Load_HighScores();
 
 
   // Start the timer interrupt
