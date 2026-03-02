@@ -23,6 +23,20 @@
 #define GRP_FLOWERS   0b101
 #define GRP_SEASONS   0b110
 
+// High Scores
+#define MAX_SCORES 10
+
+// 16 bytes for name + 4 bytes for time = 20 bytes total (perfectly divisible by 4)
+typedef struct {
+    char name[16];
+    uint32_t time;
+} HighScore;
+
+// Function Prototypes for Save/Load Highscore table
+void Load_HighScores(void);
+void Save_HighScores(void);
+void Add_HighScore(const char* new_name, uint32_t new_time);
+
 // --- Level Generation (Data) ---
 void Mahjong_Init(void);
 void Mahjong_Generate_New_Layout(void);
