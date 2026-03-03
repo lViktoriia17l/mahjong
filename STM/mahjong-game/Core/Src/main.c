@@ -39,7 +39,7 @@ UART_HandleTypeDef huart1;
 /* USER CODE BEGIN PV */
 /* --- Protocol Buffers --- */
 uint8_t rx_packet[3];       // [CMD, DATA, CRC] - Fixed 3 bytes
-uint8_t tx_packet[52];      // [CMD, 50xDATA, CRC]
+uint8_t tx_packet[210];     // [CMD, 50xDATA, CRC]
 volatile uint8_t packet_ready = 0; // Flag to tell Main that data arrived
 /* USER CODE END PV */
 
@@ -175,6 +175,35 @@ int main(void)
                     break;
                 }
 
+                case CMD_SET_NAME: {
+                	uint8_t name_len = data; // DATA has name length
+                    if (name_len > 0 && name_len <= 10) {
+                    	uint8_t payload_buffer[12];
+
+                    	// Clearing hardware before starting
+                        __HAL_UART_CLEAR_OREFLAG(&huart1);
+
+                        // Reading the name
+                        if (HAL_UART_Receive(&huart1, payload_buffer, name_len + 1, 500) == HAL_OK) {
+                        	uint8_t payload_crc = Calc_CRC(payload_buffer, name_len);
+                        	// If CRC is correct, save
+                            if (payload_crc == payload_buffer[name_len]) {
+                            	char temp_name[16];
+                                memcpy(temp_name, payload_buffer, name_len);
+                                temp_name[name_len] = '\0';
+                                Mahjong_SetPlayerName(temp_name);
+                            }
+                        }
+                    }
+
+                    // Confirming that everything is correct (0x00)
+                    tx_packet[1] = 0x00;
+                    break;
+                }
+                         // Respond with standard 3-byte ACK (handled automatically at the end of the while loop)
+                         tx_packet[1] = 0x00;
+                         break;
+
                 case CMD_GET_TIME: {
                     uint32_t elapsed = Timer_GetSeconds();
                     // Split 32-bit integer into 4 bytes (Big Endian)
@@ -184,6 +213,19 @@ int main(void)
                     tx_packet[4] = elapsed & 0xFF;
                     break;
                 }
+                case CMD_GET_LEADERS:
+                    tx_packet[0] = CMD_GET_LEADERS;
+                    memcpy(&tx_packet[1], leaderboard, 200);
+
+                    // Рахуємо CRC для 201 байта (CMD + 200 байт даних)
+                    tx_packet[201] = Calc_CRC(tx_packet, 201);
+
+                    // Відправляємо 202 байти (CMD + DATA + CRC)
+                    HAL_UART_Transmit(&huart1, tx_packet, 202, 1000);
+
+                    packet_ready = 0;
+                    HAL_UART_Receive_IT(&huart1, rx_packet, 3);
+                    break;
             }
 
             // Calculate outgoing CRC (over first 51 bytes)
