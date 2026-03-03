@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import time
+import struct
 from UART_handler import UARTHandler
 
 # --- CONFIGURATION ---
@@ -13,6 +14,7 @@ CMD_GIVE_UP = 0x07
 CMD_HINT = 0x08
 CMD_SET_NAME = 0x09
 CMD_GET_TIME = 0x0B
+CMD_GET_LEADERS = 0x0C
 
 PACKET_SIZE = 52  # 50 tiles + 1 byte CMD + 1 byte CRC
 TILE_W, TILE_H, SHADOW_OFFSET = 50, 65, 4
@@ -264,7 +266,7 @@ class GameInterface(tk.Frame):
                 self.check_game_over()
                 if all(val == 0 for val in self.current_board_data): 
                     self.timer_active = False # Stop clock on win
-                    self.after(500, lambda: self.show_end_game_popup("VICTORY!", "You cleared the board!", "#2E7D32"))
+                    self.after(500, lambda: self.show_end_game_popup("VICTORY!", "You cleared the board!", "#2E7D32", is_victory=True))
             else:
                 old_idx = self.selected_index
                 self.selected_index = None
@@ -320,17 +322,49 @@ class GameInterface(tk.Frame):
                 self.timer_active = False # Stop clock on lose
                 self.show_end_game_popup("GAME OVER", "No moves left & no shuffles.", "#D32F2F")
 
-    def show_end_game_popup(self, title, message, color):
+    def show_end_game_popup(self, title, message, color, is_victory=False):
         popup = tk.Toplevel(self)
         popup.title(title)
-        popup.geometry("300x200")
+        # Make the window taller if we need to display the leaderboard
+        popup.geometry("380x480" if is_victory else "300x200")
         popup.configure(bg="#f0f0f0")
         popup.grab_set()
         
         tk.Label(popup, text=title, font=("Arial", 18, "bold"), fg=color, bg="#f0f0f0").pack(pady=10)
         tk.Label(popup, text=message, font=("Arial", 10), bg="#f0f0f0").pack(pady=5)
+        
+        # ---> NEW: Draw Leaderboard if Victory <---
+        if is_victory:
+            leaders = self.fetch_leaderboard()
+            if leaders:
+                lb_frame = tk.Frame(popup, bg="#f0f0f0")
+                lb_frame.pack(pady=10, fill=tk.BOTH, expand=True, padx=20)
+                
+                tk.Label(lb_frame, text="🏆 TOP 10 PLAYERS 🏆", font=("Arial", 12, "bold"), bg="#f0f0f0", fg="#FFA000").pack(pady=(0, 5))
+                
+                # Create a Treeview table
+                columns = ("rank", "name", "time")
+                tree = ttk.Treeview(lb_frame, columns=columns, show="headings", height=10)
+                tree.heading("rank", text="#")
+                tree.heading("name", text="Player Name")
+                tree.heading("time", text="Time (s)")
+                
+                tree.column("rank", width=30, anchor="center")
+                tree.column("name", width=150, anchor="w")
+                tree.column("time", width=80, anchor="center")
+                tree.pack(fill=tk.BOTH, expand=True)
+                
+                # Populate the table
+                for i, (name, p_time) in enumerate(leaders):
+                    display_time = f"{p_time} s" if p_time < 999999 else "---"
+                    disp_name = name if name and name != "---" else "Empty Slot"
+                    tree.insert("", "end", values=(i+1, disp_name, display_time))
+            else:
+                tk.Label(popup, text="Failed to load leaderboard.", fg="red", bg="#f0f0f0").pack(pady=10)
+
+        # Buttons
         btn_frame = tk.Frame(popup, bg="#f0f0f0")
-        btn_frame.pack(pady=20)
+        btn_frame.pack(pady=15)
         
         tk.Button(btn_frame, text="Retry", width=10, bg="#4CAF50", fg="white",
                   command=lambda: [popup.destroy(), self.send_reset_command()]).pack(side=tk.LEFT, padx=5)
@@ -430,6 +464,36 @@ class GameInterface(tk.Frame):
             for c in range(4): draw_tile(i, c, r, 1, 0.5, 0.5); i += 1
         for r in range(3):
             for c in range(3): draw_tile(i, c, r, 2, 1, 1); i += 1
+
+    def fetch_leaderboard(self):
+        self.log("Fetching leaderboard from STM32...")
+        self.controller.uart_busy = True
+        self.controller.uart.reset_buffer()
+        
+        # Send the request
+        if not self.controller.uart.send_packet(CMD_GET_LEADERS, 0x00):
+            self.controller.uart_busy = False
+            return None
+            
+        # Read the 202-byte response (1 CMD + 200 DATA + 1 CRC)
+        resp = self.controller.uart.read_packet_strictly(202, timeout_sec=2.0)
+        self.controller.uart_busy = False
+        
+        if resp and len(resp) == 201 and resp[0] == CMD_GET_LEADERS:
+            payload = resp[1:] # Strip the CMD byte
+            leaders = []
+            
+            for i in range(10):
+                chunk = payload[i*20 : (i+1)*20]
+                # Unpack: 16-byte string (16s) and 4-byte unsigned int (I)
+                name_raw, play_time = struct.unpack('<16sI', chunk)
+                name = name_raw.decode('utf-8', errors='ignore').strip('\x00')
+                leaders.append((name, play_time))
+                
+            return leaders
+            
+        self.log("Failed to receive or parse leaderboard packet.")
+        return None
 
 # --- APP CONTROLLER ---
 class MahjongApp(tk.Tk):
