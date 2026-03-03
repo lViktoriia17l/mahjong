@@ -41,6 +41,12 @@ class MainMenu(tk.Frame):
         self.entry_name = tk.Entry(frame_name, textvariable=self.player_name_var, font=("Arial", 12), width=15)
         self.entry_name.grid(row=0, column=1, padx=5)
 
+        # Обмеження вводу до 10 символів
+        self.entry_name.configure(
+            validate="key",
+            validatecommand=(self.register(self.limit_name), "%P")
+        )
+
         frame_port = tk.Frame(self, bg="#f0f0f0")
         frame_port.pack()
         self.port_var = tk.StringVar()
@@ -50,6 +56,9 @@ class MainMenu(tk.Frame):
         tk.Button(frame_port, text="↻", command=self.refresh_ports).grid(row=0, column=1)
         tk.Button(self, text="CONNECT & PLAY", command=self.connect, bg="#4CAF50", fg="white", font=("Arial", 14, "bold"), pady=10).pack(pady=40)
 
+    def limit_name(self, new_value):
+        return len(new_value) <= 10
+    
     def log(self, msg):
         print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
