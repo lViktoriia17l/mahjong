@@ -175,6 +175,35 @@ int main(void)
                     break;
                 }
 
+                case CMD_SET_NAME: {
+                	uint8_t name_len = data; // DATA has name length
+                    if (name_len > 0 && name_len <= 10) {
+                    	uint8_t payload_buffer[12];
+
+                    	// Clearing hardware before starting
+                        __HAL_UART_CLEAR_OREFLAG(&huart1);
+
+                        // Reading the name
+                        if (HAL_UART_Receive(&huart1, payload_buffer, name_len + 1, 500) == HAL_OK) {
+                        	uint8_t payload_crc = Calc_CRC(payload_buffer, name_len);
+                        	// If CRC is correct, save
+                            if (payload_crc == payload_buffer[name_len]) {
+                            	char temp_name[16];
+                                memcpy(temp_name, payload_buffer, name_len);
+                                temp_name[name_len] = '\0';
+                                Mahjong_SetPlayerName(temp_name);
+                            }
+                        }
+                    }
+
+                    // Confirming that everything is correct (0x00)
+                    tx_packet[1] = 0x00;
+                    break;
+                }
+                         // Respond with standard 3-byte ACK (handled automatically at the end of the while loop)
+                         tx_packet[1] = 0x00;
+                         break;
+
                 case CMD_GET_TIME: {
                     uint32_t elapsed = Timer_GetSeconds();
                     // Split 32-bit integer into 4 bytes (Big Endian)

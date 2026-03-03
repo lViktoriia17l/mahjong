@@ -76,11 +76,27 @@ class MainMenu(tk.Frame):
         if self.controller.uart.open_port():
             self.log(f"Connected to {port}")
             self.controller.uart.dtr_reset()
+            self.send_player_name(name)
+            
             self.controller.game_view.player_name = name 
             self.controller.show_game()
         else:
             self.log(f"Failed to connect to {port}")
             messagebox.showerror("Error", "Could not open port!")
+
+    def send_player_name(self, name):
+        self.log(f"Registering player name: {name}")
+        self.controller.uart.reset_buffer()
+        
+        if self.controller.uart.send_name_packet(CMD_SET_NAME, name):
+            # Чекаємо 3-байтовий ACK від STM32
+            resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+            if resp and resp[0] == CMD_SET_NAME and resp[1] == 0x00:
+                self.log(f"Name '{name}' successfully saved to STM32 RAM.")
+            else:
+                self.log("Warning: STM32 did not acknowledge the name.")
+        else:
+            self.log("Failed to send name packet.")
 
 # --- GAME INTERFACE ---
 class GameInterface(tk.Frame):

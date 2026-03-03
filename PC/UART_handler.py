@@ -16,7 +16,7 @@ class UARTHandler:
 
     def open_port(self):
         try:
-            # Базовий таймаут низького рівня ставимо невеликим (0.1с)
+            # Basic timeout of 0.1s for read operations, to prevent blocking indefinitely
             self.ser = serial.Serial(self.port_name, self.baudrate, timeout=0.1)
             self.is_open = True
             return True
@@ -58,20 +58,23 @@ class UARTHandler:
     def send_name_packet(self, cmd, name_str):
         if not self.is_connected(): return False
         try:
-            # FIX: Send ONLY a 3-byte packet to prevent STM32 buffer desynchronization.
-            # Since STM32 is strictly expecting 3 bytes, we drop the string payload 
-            # and just send a dummy data byte (0x00).
-            
-            # Stage 1: Send Header [CMD] [0x00]
-            header = struct.pack("BB", cmd, 0x00)
+            # Converting the name string to bytes, ensuring it's ASCII and max 10 bytes long
+            name_bytes = name_str.encode('ascii', errors='ignore')[:10]
+            name_len = len(name_bytes)
+
+            # Sending the header (cmd + name length) with its own CRC
+            header = struct.pack("BB", cmd, name_len)
             header_crc = self._calculate_crc(header)
-            
-            # Send exactly 3 bytes: [CMD] [0x00] [CRC]
             self.ser.write(header + struct.pack("B", header_crc))
             self.ser.flush()
 
-            # Note: We removed Stage 2 (the name bytes) because the STM32 
-            # does not currently have a buffer to absorb them.
+            # Critical pause: Give STM32 50 ms, to prepare for string receive
+            time.sleep(0.05) 
+
+            # Sending the name bytes with its own CRC
+            payload_crc = self._calculate_crc(name_bytes)
+            self.ser.write(name_bytes + struct.pack("B", payload_crc))
+            self.ser.flush()
             
             return True
         except:
@@ -87,20 +90,20 @@ class UARTHandler:
         
         try:
             while len(buffer) < count:
-                # Перевіряємо, чи не вийшов загальний час очікування
+                # Checking, if waiting time isn't over
                 if (time.time() - start_time) > timeout_sec:
                     return None 
                 
-                # Читаємо те, що вже є в буфері (або чекаємо 0.1с згідно timeout в open_port)
+                # Reading the buffer (or wait 0.1s timeout in open_port)
                 remaining = count - len(buffer)
                 chunk = self.ser.read(remaining)
                 if chunk:
                     buffer += chunk
             
-            # Перевірка CRC
+            # Check CRC
             if len(buffer) == count:
                 if self._calculate_crc(buffer[:-1]) == buffer[-1]:
-                    return buffer[:-1] # Повертаємо дані без байта CRC
+                    return buffer[:-1] # Returning data without CRC byte
             return None
             
         except (serial.SerialException, AttributeError):
