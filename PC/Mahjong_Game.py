@@ -116,6 +116,20 @@ class MainMenu(tk.Frame):
         else:
             self.log("Failed to send name packet.")
 
+    def send_player_name(self, name):
+        self.log(f"Registering player name: {name}")
+        self.controller.uart.reset_buffer()
+        
+        if self.controller.uart.send_name_packet(CMD_SET_NAME, name):
+            # Чекаємо 3-байтовий ACK від STM32
+            resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+            if resp and resp[0] == CMD_SET_NAME and resp[1] == 0x00:
+                self.log(f"Name '{name}' successfully saved to STM32 RAM.")
+            else:
+                self.log("Warning: STM32 did not acknowledge the name.")
+        else:
+            self.log("Failed to send name packet.")
+
 # --- GAME INTERFACE ---
 class GameInterface(tk.Frame):
     def __init__(self, parent, controller):
@@ -530,6 +544,36 @@ class GameInterface(tk.Frame):
                         # Pass x_offset to gx, y_offset to gy, layer to z, and 0 to ox/oy
                         draw_tile(i, x_offset, y_offset, layer, 0, 0)
                         i += 1
+
+    def fetch_leaderboard(self):
+        self.log("Fetching leaderboard from STM32...")
+        self.controller.uart_busy = True
+        self.controller.uart.reset_buffer()
+        
+        # Send the request
+        if not self.controller.uart.send_packet(CMD_GET_LEADERS, 0x00):
+            self.controller.uart_busy = False
+            return None
+            
+        # Read the 202-byte response (1 CMD + 200 DATA + 1 CRC)
+        resp = self.controller.uart.read_packet_strictly(202, timeout_sec=2.0)
+        self.controller.uart_busy = False
+        
+        if resp and len(resp) == 201 and resp[0] == CMD_GET_LEADERS:
+            payload = resp[1:] # Strip the CMD byte
+            leaders = []
+            
+            for i in range(10):
+                chunk = payload[i*20 : (i+1)*20]
+                # Unpack: 16-byte string (16s) and 4-byte unsigned int (I)
+                name_raw, play_time = struct.unpack('<16sI', chunk)
+                name = name_raw.decode('utf-8', errors='ignore').strip('\x00')
+                leaders.append((name, play_time))
+                
+            return leaders
+            
+        self.log("Failed to receive or parse leaderboard packet.")
+        return None
 
     def fetch_leaderboard(self):
         self.log("Fetching leaderboard from STM32...")

@@ -49,7 +49,31 @@ void Save_HighScores(void) {
 }
 
 void Add_HighScore(const char* new_name, uint32_t new_time) {
+    int existing_index = -1;
     int insert_index = -1;
+
+    // Checking, if player is already exist in array
+    for (int i = 0; i < MAX_SCORES; i++) {
+        if (strcmp(leaderboard[i].name, new_name) == 0) {
+            existing_index = i;
+            break;
+        }
+    }
+
+    //If true
+    if (existing_index != -1) {
+        // If result is same - ignoring
+        if (new_time >= leaderboard[existing_index].time) {
+            return;
+        }
+        // If result is better than before - removing + replacing with new one
+        for (int i = existing_index; i < MAX_SCORES - 1; i++) {
+            leaderboard[i] = leaderboard[i + 1];
+        }
+        // reset the last element to default because we “pulled out” one record
+        strcpy(leaderboard[MAX_SCORES - 1].name, "---");
+        leaderboard[MAX_SCORES - 1].time = 999999;
+    }
 
     for (int i = 0; i < MAX_SCORES; i++) {
         if (new_time < leaderboard[i].time) {
@@ -58,15 +82,19 @@ void Add_HighScore(const char* new_name, uint32_t new_time) {
         }
     }
 
+    // 4. Виконуємо вставку, якщо результат потрапив у ТОП-10
     if (insert_index != -1) {
+        // Зсуваємо всіх нижче за insert_index
         for (int i = MAX_SCORES - 1; i > insert_index; i--) {
             leaderboard[i] = leaderboard[i - 1];
         }
 
+        // Записуємо нові дані
         strncpy(leaderboard[insert_index].name, new_name, 15);
         leaderboard[insert_index].name[15] = '\0';
         leaderboard[insert_index].time = new_time;
 
+        // Зберігаємо у Flash
         Save_HighScores();
     }
 }
