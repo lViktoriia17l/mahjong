@@ -19,6 +19,8 @@
 static uint8_t board_state[TOTAL_PIECES];
 static char current_player_name[16] = "Player1";
 
+uint8_t current_layout = 0;
+
 volatile uint32_t hardware_seconds = 0;
 static uint8_t hw_timer_running = 0;
 
@@ -38,7 +40,8 @@ void Mahjong_Init(void) {
     memset(board_state, 0, TOTAL_PIECES);
 }
 
-void Mahjong_Generate_New_Layout(void) {
+void Mahjong_Generate_New_Layout(uint8_t layout_type) {
+    current_layout = layout_type;
     uint8_t idx = 0;
 
     // 1. Fill Deck
@@ -49,10 +52,10 @@ void Mahjong_Generate_New_Layout(void) {
 
     // 2. Shuffle (Fisher-Yates)
     for (int i = TOTAL_PIECES - 1; i > 0; i--) {
-        int j = rand() % (i + 1);
-        uint8_t temp = board_state[i];
-        board_state[i] = board_state[j];
-        board_state[j] = temp;
+    	int j = rand() % (i + 1);
+    	uint8_t temp = board_state[i];
+     	board_state[i] = board_state[j];
+     	board_state[j] = temp;
     }
 }
 

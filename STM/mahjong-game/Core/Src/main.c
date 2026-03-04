@@ -132,8 +132,8 @@ int main(void)
             tx_packet[0] = cmd;
 
             switch (cmd) {
-                case CMD_START:
-                    Mahjong_Generate_New_Layout();
+            	case CMD_START:
+                	Mahjong_Generate_New_Layout(data);
                     Timer_Start(); // Start the game clock
                     memcpy(&tx_packet[1], Mahjong_Get_Board_State(), 50);
                     break;

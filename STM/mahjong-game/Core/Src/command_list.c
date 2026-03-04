@@ -18,73 +18,96 @@ static int is_tile_present(uint8_t index) {
 
 // Converts Layer/Row/Col to Index. Returns -1 if out of bounds.
 static int get_index(int layer, int row, int col) {
-    if (layer == 0) { // 5x5
-        if (row < 0 || row >= 5 || col < 0 || col >= 5) return -1;
-        return (row * 5) + col;
-    }
-    else if (layer == 1) { // 4x4
-        if (row < 0 || row >= 4 || col < 0 || col >= 4) return -1;
-        return 25 + (row * 4) + col;
-    }
-    else if (layer == 2) { // 3x3
-        if (row < 0 || row >= 3 || col < 0 || col >= 3) return -1;
-        return 41 + (row * 3) + col;
+    if (current_layout == 0) { // Default 5x5 Square
+        if (layer == 0) { if (row < 0 || row >= 5 || col < 0 || col >= 5) return -1; return (row * 5) + col; }
+        if (layer == 1) { if (row < 0 || row >= 4 || col < 0 || col >= 4) return -1; return 25 + (row * 4) + col; }
+        if (layer == 2) { if (row < 0 || row >= 3 || col < 0 || col >= 3) return -1; return 41 + (row * 3) + col; }
+    } else { // Symmetrical Triangle Pyramid
+        if (layer == 0) {
+            if (row < 0 || row >= 7 || col < 0 || col > row) return -1;
+            int base = 0; for(int i=0; i<row; i++) base += (i+1); return base + col;
+        } else if (layer == 1) {
+            if (row < 0 || row >= 5 || col < 0 || col > row) return -1;
+            int base = 28; for(int i=0; i<row; i++) base += (i+1); return base + col;
+        } else if (layer == 2) {
+            if (row < 0 || row >= 3 || col < 0 || col > row) return -1;
+            int base = 43; for(int i=0; i<row; i++) base += (i+1); return base + col;
+        } else if (layer == 3) {
+            if (row == 0 && col == 0) return 49;
+        }
     }
     return -1;
 }
 
 // Converts Index to Layer/Row/Col
 static void get_coord(uint8_t index, int* layer, int* row, int* col) {
-    if (index < 25) {
-        *layer = 0; *row = index / 5; *col = index % 5;
-    } else if (index < 41) {
-        *layer = 1; index -= 25; *row = index / 4; *col = index % 4;
-    } else {
-        *layer = 2; index -= 41; *row = index / 3; *col = index % 3;
+    if (current_layout == 0) { // Default Square
+        if (index < 25) { *layer = 0; *row = index / 5; *col = index % 5; }
+        else if (index < 41) { *layer = 1; index -= 25; *row = index / 4; *col = index % 4; }
+        else { *layer = 2; index -= 41; *row = index / 3; *col = index % 3; }
+    } else { // Symmetrical Triangle Pyramid
+        if (index < 28) {
+            *layer = 0; int r = 0, sum = 0;
+            while (sum + (r + 1) <= index) { sum += (r + 1); r++; }
+            *row = r; *col = index - sum;
+        } else if (index < 43) {
+            *layer = 1; index -= 28; int r = 0, sum = 0;
+            while (sum + (r + 1) <= index) { sum += (r + 1); r++; }
+            *row = r; *col = index - sum;
+        } else if (index < 49) {
+            *layer = 2; index -= 43; int r = 0, sum = 0;
+            while (sum + (r + 1) <= index) { sum += (r + 1); r++; }
+            *row = r; *col = index - sum;
+        } else {
+            *layer = 3; *row = 0; *col = 0;
+        }
     }
 }
 
 // --- The Core Rule: Is Tile Exposed? ---
 static int is_tile_exposed(uint8_t index) {
-    if (!is_tile_present(index)) return 0; // Tile doesn't exist
+    if (!is_tile_present(index)) return 0;
 
     int l, r, c;
     get_coord(index, &l, &r, &c);
 
-    // 1. Check Z-Axis (Is it covered from above?)
-    // A tile at Layer L(r,c) is covered by tiles in Layer L+1 at:
-    // (r-1, c-1), (r-1, c), (r, c-1), (r, c)
-    if (l < 2) {
+    if (current_layout == 0) {
+        // Square Coverage Logic
         int next_l = l + 1;
         int blockers[] = {
-            get_index(next_l, r - 1, c - 1), // Top-Left Overlay
-            get_index(next_l, r - 1, c),     // Top-Right Overlay
-            get_index(next_l, r, c - 1),     // Bottom-Left Overlay
-            get_index(next_l, r, c)          // Bottom-Right Overlay
+            get_index(next_l, r - 1, c - 1), get_index(next_l, r - 1, c),
+            get_index(next_l, r, c - 1),     get_index(next_l, r, c)
         };
-
         for (int i = 0; i < 4; i++) {
-            if (blockers[i] != -1 && is_tile_present(blockers[i])) {
-                return 0; // Blocked from above
-            }
+            if (blockers[i] != -1 && is_tile_present(blockers[i])) return 0;
+        }
+    } else {
+        // Symmetrical Triangle Coverage Logic
+        int next_l = l + 1;
+        // In this geometry, a tile from Layer L+1 Row R-1 perfectly overlaps
+        // the left and right halves of the tiles directly below it.
+        int blockers[] = {
+            get_index(next_l, r - 1, c - 1), // Top-Left Overlay
+            get_index(next_l, r - 1, c)      // Top-Right Overlay
+        };
+        for (int i = 0; i < 2; i++) {
+            if (blockers[i] != -1 && is_tile_present(blockers[i])) return 0; // Blocked from above
         }
     }
 
-    // 2. Check X-Axis (Is it blocked on BOTH sides?)
-    // Left Neighbor: (r, c-1)
-    // Right Neighbor: (r, c+1)
+    // X-Axis (Is it blocked on BOTH left and right sides?)
+    // This logic applies to BOTH layout types perfectly!
     int idx_left = get_index(l, r, c - 1);
     int idx_right = get_index(l, r, c + 1);
 
     int left_blocked = (idx_left != -1 && is_tile_present(idx_left));
     int right_blocked = (idx_right != -1 && is_tile_present(idx_right));
 
-    if (left_blocked && right_blocked) {
-        return 0; // Blocked on both sides
-    }
+    if (left_blocked && right_blocked) return 0; // Blocked on both sides
 
     return 1; // Exposed!
 }
+
 
 // --- Command Implementations ---
 
@@ -92,7 +115,7 @@ void cmd_reset(void) {
     active_selection = -1;
     shuffle_count = 0;
     Mahjong_Init();
-    Mahjong_Generate_New_Layout();
+    Mahjong_Generate_New_Layout(current_layout);
 }
 
 void cmd_give_up(void) {

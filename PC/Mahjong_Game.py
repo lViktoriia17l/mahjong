@@ -41,6 +41,13 @@ class MainMenu(tk.Frame):
         self.entry_name = tk.Entry(frame_name, textvariable=self.player_name_var, font=("Arial", 12), width=15)
         self.entry_name.grid(row=0, column=1, padx=5)
 
+        frame_layout = tk.Frame(self, bg="#f0f0f0")
+        frame_layout.pack(pady=(5, 15))
+        tk.Label(frame_layout, text="Layout:", font=("Arial", 12), bg="#f0f0f0").grid(row=0, column=0, padx=5)
+        self.layout_var = tk.StringVar(value="Square Pyramid")
+        self.combo_layout = ttk.Combobox(frame_layout, textvariable=self.layout_var, values=["Square Pyramid", "Triangle Pyramid"], state="readonly", width=19)
+        self.combo_layout.grid(row=0, column=1)
+
         # Обмеження вводу до 10 символів
         self.entry_name.configure(
             validate="key",
@@ -85,13 +92,29 @@ class MainMenu(tk.Frame):
         if self.controller.uart.open_port():
             self.log(f"Connected to {port}")
             self.controller.uart.dtr_reset()
+            time.sleep(1.5)
+            
             self.send_player_name(name)
+            
+            # Save Layout choice to the game view for later use
+            self.controller.game_view.layout_id = 1 if self.layout_var.get() == "Symmetrical Pyramid" else 0
             
             self.controller.game_view.player_name = name 
             self.controller.show_game()
+
+    def send_player_name(self, name):
+        self.log(f"Registering player name: {name}")
+        self.controller.uart.reset_buffer()
+        
+        if self.controller.uart.send_name_packet(CMD_SET_NAME, name):
+            # Чекаємо 3-байтовий ACK від STM32
+            resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
+            if resp and resp[0] == CMD_SET_NAME and resp[1] == 0x00:
+                self.log(f"Name '{name}' successfully saved to STM32 RAM.")
+            else:
+                self.log("Warning: STM32 did not acknowledge the name.")
         else:
-            self.log(f"Failed to connect to {port}")
-            messagebox.showerror("Error", "Could not open port!")
+            self.log("Failed to send name packet.")
 
     def send_player_name(self, name):
         self.log(f"Registering player name: {name}")
@@ -197,7 +220,8 @@ class GameInterface(tk.Frame):
         self.controller.uart_busy = True
         self.controller.uart.reset_buffer()
         
-        if not self.controller.uart.send_packet(CMD_START, 0x00):
+        layout_mode = getattr(self, 'layout_id', 0)
+        if not self.controller.uart.send_packet(CMD_START, layout_mode):
             self.handle_error(self.send_start_command)
             return
         
@@ -247,25 +271,33 @@ class GameInterface(tk.Frame):
 
     def send_select_command(self, index):
         self.log(f"CMD_SELECT sent for index {index}")
-        self.controller.uart_busy = True
-        self.controller.uart.reset_buffer()
         
-        if not self.controller.uart.send_packet(CMD_SELECT, index):
-            self.handle_error(self.send_select_command, index)
-            return
-        
-        resp = self.controller.uart.read_packet_strictly(3, timeout_sec=1.0)
-        self.controller.uart_busy = False
-        
-        valid, payload = self.validate_response(CMD_SELECT, resp, 2)
-        if valid:
-            if payload[1] == 0x00:
-                self.selected_index = index
-                self.draw_pyramid(self.current_board_data)
+        # Lock the door
+        self.controller.uart_busy = True 
+        try:
+            self.controller.uart.reset_buffer()
+            if self.controller.uart.send_packet(CMD_SELECT, index):
+                resp = self.controller.uart.read_packet_strictly(3, timeout_sec=2.0)
+                
+                # Keep all your existing success/error logic here) ...
+                if resp and resp[0] == CMD_SELECT:
+                    if resp[1] == 0x00:
+                        self.selected_index = index if self.selected_index != index else None
+                        self.draw_pyramid(self.current_board_data)
+                    else:
+                        self.error_tiles.append(index)
+                        self.draw_pyramid(self.current_board_data)
+                        
+                        # ---> FIX: Change clear_errors to clear_blink <---
+                        self.after(500, self.clear_blink) 
+                else:
+                    self.handle_error(lambda: self.send_select_command(index))
             else:
-                self.show_error_blink([index])
-        else:
-            self.handle_error(self.send_select_command, index)
+                self.handle_error(lambda: self.send_select_command(index))
+                
+        finally:
+            # Unlock the door
+            self.controller.uart_busy = False
 
     def send_match_command(self, index):
         self.log(f"CMD_MATCH sent for index {index}")
@@ -459,8 +491,7 @@ class GameInterface(tk.Frame):
         self.current_board_data = data
         self.update_idletasks()
         cx, cy = self.canvas.winfo_width()/2, self.canvas.winfo_height()/2
-        start_x, start_y = cx - (2.5 * TILE_W), cy - (2.5 * TILE_H)
-
+        
         def draw_tile(idx, gx, gy, z, ox, oy):
             if idx >= len(data) or data[idx] == 0: return
             val_byte = data[idx]
@@ -483,12 +514,66 @@ class GameInterface(tk.Frame):
             self.canvas.create_text(x+TILE_W/2, y+TILE_H-10, text=name[:3], font=("Arial", 7))
 
         i = 0
-        for r in range(5):
-            for c in range(5): draw_tile(i, c, r, 0, 0, 0); i += 1
-        for r in range(4):
-            for c in range(4): draw_tile(i, c, r, 1, 0.5, 0.5); i += 1
-        for r in range(3):
-            for c in range(3): draw_tile(i, c, r, 2, 1, 1); i += 1
+        layout_mode = getattr(self, 'layout_id', 0)
+        
+        if layout_mode == 0:
+            # Default Square Layout
+            start_x, start_y = cx - (2.5 * TILE_W), cy - (2.5 * TILE_H)
+            for r in range(5):
+                for c in range(5): draw_tile(i, c, r, 0, 0, 0); i += 1
+            for r in range(4):
+                for c in range(4): draw_tile(i, c, r, 1, 0.5, 0.5); i += 1
+            for r in range(3):
+                for c in range(3): draw_tile(i, c, r, 2, 1, 1); i += 1
+        else:
+            # Symmetrical Triangle Pyramid Layout
+            start_x = cx - (TILE_W / 2.0)  # Perfectly center the peak
+            start_y = cy - (3.5 * TILE_H)  # Perfectly vertically center the 7 rows
+            
+            for layer in range(4):
+                num_rows = 7 - (2 * layer)
+                for row in range(num_rows):
+                    num_cols = row + 1
+                    for col in range(num_cols):
+                        if i >= 50: break
+                        
+                        # Use the exact math from your test_pyramid.py!
+                        x_offset = col - (row / 2.0)
+                        y_offset = layer + row
+                        
+                        # Pass x_offset to gx, y_offset to gy, layer to z, and 0 to ox/oy
+                        draw_tile(i, x_offset, y_offset, layer, 0, 0)
+                        i += 1
+
+    def fetch_leaderboard(self):
+        self.log("Fetching leaderboard from STM32...")
+        self.controller.uart_busy = True
+        self.controller.uart.reset_buffer()
+        
+        # Send the request
+        if not self.controller.uart.send_packet(CMD_GET_LEADERS, 0x00):
+            self.controller.uart_busy = False
+            return None
+            
+        # Read the 202-byte response (1 CMD + 200 DATA + 1 CRC)
+        resp = self.controller.uart.read_packet_strictly(202, timeout_sec=2.0)
+        self.controller.uart_busy = False
+        
+        if resp and len(resp) == 201 and resp[0] == CMD_GET_LEADERS:
+            payload = resp[1:] # Strip the CMD byte
+            leaders = []
+            
+            for i in range(10):
+                chunk = payload[i*20 : (i+1)*20]
+                # Unpack: 16-byte string (16s) and 4-byte unsigned int (I)
+                name_raw, play_time = struct.unpack('<16sI', chunk)
+                name = name_raw.decode('utf-8', errors='ignore').strip('\x00')
+                leaders.append((name, play_time))
+                
+            return leaders
+            
+        self.log("Failed to receive or parse leaderboard packet.")
+        return None
 
     def fetch_leaderboard(self):
         self.log("Fetching leaderboard from STM32...")
