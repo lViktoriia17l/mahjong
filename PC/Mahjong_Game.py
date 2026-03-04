@@ -44,8 +44,8 @@ class MainMenu(tk.Frame):
         frame_layout = tk.Frame(self, bg="#f0f0f0")
         frame_layout.pack(pady=(5, 15))
         tk.Label(frame_layout, text="Layout:", font=("Arial", 12), bg="#f0f0f0").grid(row=0, column=0, padx=5)
-        self.layout_var = tk.StringVar(value="Default (Square)")
-        self.combo_layout = ttk.Combobox(frame_layout, textvariable=self.layout_var, values=["Default (Square)", "Symmetrical Pyramid"], state="readonly", width=19)
+        self.layout_var = tk.StringVar(value="Square Pyramid")
+        self.combo_layout = ttk.Combobox(frame_layout, textvariable=self.layout_var, values=["Square Pyramid", "Triangle Pyramid"], state="readonly", width=19)
         self.combo_layout.grid(row=0, column=1)
 
         # Обмеження вводу до 10 символів
