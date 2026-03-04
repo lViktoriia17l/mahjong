@@ -97,7 +97,7 @@ class MainMenu(tk.Frame):
             self.send_player_name(name)
             
             # Save Layout choice to the game view for later use
-            self.controller.game_view.layout_id = 1 if self.layout_var.get() == "Symmetrical Pyramid" else 0
+            self.controller.game_view.layout_id = 1 if self.layout_var.get() == "Triangle Pyramid" else 0
             
             self.controller.game_view.player_name = name 
             self.controller.show_game()
