@@ -40,7 +40,7 @@ void Add_HighScore(const char* new_name, uint32_t new_time);
 
 // --- Level Generation (Data) ---
 void Mahjong_Init(void);
-void Mahjong_Generate_New_Layout(void);
+void Mahjong_Generate_New_Layout(uint8_t layout_type);
 uint8_t* Mahjong_Get_Board_State(void);
 
 // --- Command Logic (Game Controller) ---
@@ -61,6 +61,7 @@ uint32_t Timer_GetSeconds(void);
 void Timer_Tick(void);
 
 extern HighScore leaderboard[MAX_SCORES];
+extern uint8_t current_layout;
 
 void Load_HighScores(void);
 void Save_HighScores(void);
