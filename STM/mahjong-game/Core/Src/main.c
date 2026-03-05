@@ -1,268 +1,172 @@
-/* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  */
-/* USER CODE END Header */
-/* Includes ------------------------------------------------------------------*/
+/* --- Mahjong-Game on STM32 final build --- */
+/* ------- Last checked by @isWeezzy ------- */
+/* --------------- Includes ---------------- */
 #include "main.h"
-
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
 #include "mahjong.h"
 #include <stdlib.h>
 #include <string.h>
-/* USER CODE END Includes */
 
-/* Private typedef -----------------------------------------------------------*/
-/* USER CODE BEGIN PTD */
+/* --------- Периферійні дескриптори -------- */
+TIM_HandleTypeDef htim2;    		// Таймер для відстеження ігрового часу
+UART_HandleTypeDef huart1;  		// UART для зв'язку з верхнім рівнем (ПК/додаток)
 
-/* USER CODE END PTD */
+/* ------------ Буфери протоколу ------------ */
+uint8_t rx_packet[3];               // Вхідний пакет: [Команда, Дані, CRC] (завжди 3 байти)
+uint8_t tx_packet[210];             // Вихідний пакет: [Команда, Дані (до 200 байт), CRC]
+volatile uint8_t packet_ready = 0;  // Прапорець переривання: 1, якщо отримано новий пакет
 
-/* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
-
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-
-/* USER CODE END PM */
-
-/* Private variables ---------------------------------------------------------*/
-TIM_HandleTypeDef htim2;
-
-UART_HandleTypeDef huart1;
-
-/* USER CODE BEGIN PV */
-/* --- Protocol Buffers --- */
-uint8_t rx_packet[3];       // [CMD, DATA, CRC] - Fixed 3 bytes
-uint8_t tx_packet[210];     // [CMD, 50xDATA, CRC]
-volatile uint8_t packet_ready = 0; // Flag to tell Main that data arrived
-/* USER CODE END PV */
-
-/* Private function prototypes -----------------------------------------------*/
+/* ------- Прототипи системних функцій ------ */
 void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM2_Init(void);
-/* USER CODE BEGIN PFP */
-uint8_t Calc_CRC(uint8_t *data, uint8_t len);
-/* USER CODE END PFP */
 
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-
-/* --------- Helper: CRC Calculation --------- */
+/* ---- Обчислення контрольної суми (CRC) --- */
 uint8_t Calc_CRC(uint8_t *data, uint8_t len) {
     uint8_t crc = 0;
-    for(int i=0; i<len; i++) crc ^= data[i];
+    for(int i = 0; i < len; i++) crc ^= data[i];
     return crc;
 }
 
-/* --------- UART RX callback (Interrupt) --------- */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == USART1)
-    {
-        packet_ready = 1;
-    }
+/* ------- Обробники переривань UART -------- */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART1) packet_ready = 1;
 }
-/* USER CODE END 0 */
 
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
-int main(void)
-{
-
-  /* USER CODE BEGIN 1 */
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_USART1_UART_Init();
-  MX_TIM2_Init();
-  /* USER CODE BEGIN 2 */
-
-  Mahjong_Init();
-  Load_HighScores();
-
-
-  // Start the timer interrupt
-  HAL_TIM_Base_Start_IT(&htim2);
-
-  // Start listening for the first 3-byte command
-  HAL_UART_Receive_IT(&huart1, rx_packet, 3);
-  /* USER CODE END 2 */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-    if (packet_ready) {
-        uint8_t cmd = rx_packet[0];
-        uint8_t data = rx_packet[1];
-        uint8_t received_crc = rx_packet[2];
-
-        uint8_t calculated_crc = Calc_CRC(rx_packet, 2);
-
-        if (calculated_crc == received_crc) {
-
-            memset(tx_packet, 0, sizeof(tx_packet));
-            tx_packet[0] = cmd;
-
-            switch (cmd) {
-            	case CMD_START:
-                	Mahjong_Generate_New_Layout(data);
-                    Timer_Start(); // Start the game clock
-                    memcpy(&tx_packet[1], Mahjong_Get_Board_State(), 50);
-                    break;
-
-                case CMD_RESET:
-                    cmd_reset();
-                    break;
-
-                case CMD_SHUFFLE: {
-                    uint8_t res = cmd_shuffle();
-                    if (res == 0xFF) {
-                        tx_packet[1] = 0xFF; // Limit reached
-                    } else {
-                        memcpy(&tx_packet[1], Mahjong_Get_Board_State(), 50);
-                    }
-                    break;
-                }
-
-                case CMD_SELECT:
-                    tx_packet[1] = cmd_select(data);
-                    break;
-
-                case CMD_MATCH:
-                    tx_packet[1] = cmd_match(data);
-                    break;
-
-                case CMD_GIVE_UP:
-                    cmd_give_up();
-                    break;
-
-                case CMD_HINT: {
-                    uint8_t idx1, idx2;
-                    if (cmd_hint(&idx1, &idx2)) {
-                        tx_packet[1] = idx1;
-                        tx_packet[2] = idx2;
-                    } else {
-                        tx_packet[1] = 100; // No pairs left
-                    }
-                    break;
-                }
-
-                case CMD_SET_NAME: {
-                	uint8_t name_len = data; // DATA has name length
-                    if (name_len > 0 && name_len <= 10) {
-                    	uint8_t payload_buffer[12];
-
-                    	// Clearing hardware before starting
-                        __HAL_UART_CLEAR_OREFLAG(&huart1);
-
-                        // Reading the name
-                        if (HAL_UART_Receive(&huart1, payload_buffer, name_len + 1, 500) == HAL_OK) {
-                        	uint8_t payload_crc = Calc_CRC(payload_buffer, name_len);
-                        	// If CRC is correct, save
-                            if (payload_crc == payload_buffer[name_len]) {
-                            	char temp_name[16];
-                                memcpy(temp_name, payload_buffer, name_len);
-                                temp_name[name_len] = '\0';
-                                Mahjong_SetPlayerName(temp_name);
-                            }
-                        }
-                    }
-
-                    // Confirming that everything is correct (0x00)
-                    tx_packet[1] = 0x00;
-                    break;
-                }
-                         // Respond with standard 3-byte ACK (handled automatically at the end of the while loop)
-                         tx_packet[1] = 0x00;
-                         break;
-
-                case CMD_GET_TIME: {
-                    uint32_t elapsed = Timer_GetSeconds();
-                    // Split 32-bit integer into 4 bytes (Big Endian)
-                    tx_packet[1] = (elapsed >> 24) & 0xFF;
-                    tx_packet[2] = (elapsed >> 16) & 0xFF;
-                    tx_packet[3] = (elapsed >> 8) & 0xFF;
-                    tx_packet[4] = elapsed & 0xFF;
-                    break;
-                }
-                case CMD_GET_LEADERS:
-                    tx_packet[0] = CMD_GET_LEADERS;
-                    memcpy(&tx_packet[1], leaderboard, 200);
-
-                    // Рахуємо CRC для 201 байта (CMD + 200 байт даних)
-                    tx_packet[201] = Calc_CRC(tx_packet, 201);
-
-                    // Відправляємо 202 байти (CMD + DATA + CRC)
-                    HAL_UART_Transmit(&huart1, tx_packet, 202, 1000);
-
-                    packet_ready = 0;
-                    HAL_UART_Receive_IT(&huart1, rx_packet, 3);
-                    break;
-            }
-
-            // Calculate outgoing CRC (over first 51 bytes)
-            tx_packet[51] = Calc_CRC(tx_packet, 51);
-
-            // Determine transmit length based on command type to match Python expectation
-            // Python's CMD_START and CMD_SHUFFLE and CMD_GET_TIME expect 52 bytes
-            if (cmd == CMD_START || cmd == CMD_SHUFFLE || cmd == CMD_GET_TIME) {
-                HAL_UART_Transmit(&huart1, tx_packet, 52, 100);
-            }
-            // CMD_HINT expects 4 bytes
-            else if (cmd == CMD_HINT) {
-                tx_packet[3] = Calc_CRC(tx_packet, 3);
-                HAL_UART_Transmit(&huart1, tx_packet, 4, 100);
-            }
-            // All other commands expect 3 bytes
-            else {
-                tx_packet[2] = Calc_CRC(tx_packet, 2);
-                HAL_UART_Transmit(&huart1, tx_packet, 3, 100);
-            }
-        }
-
-        // Reset flag and re-enable interrupt to catch next command
+// Обробка помилок UART (наприклад, переповнення буфера)
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART1) {
+        __HAL_UART_CLEAR_OREFLAG(huart); // Очищення прапорця Overrun
         packet_ready = 0;
+        // Перезапуск читання після помилки
         HAL_UART_Receive_IT(&huart1, rx_packet, 3);
     }
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-  }
-  /* USER CODE END 3 */
 }
 
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
+int main(void) {
+    /* Ініціалізація заліза та бібліотек */
+    HAL_Init();
+    SystemClock_Config();
+    MX_USART1_UART_Init();
+    MX_TIM2_Init();
+
+    Mahjong_Init();       // Ініціалізація ігрової логіки
+    Load_HighScores();    // Завантаження таблиці лідерів з пам'яті
+
+    /* Запуск таймера та очікування першої команди через переривання */
+    HAL_TIM_Base_Start_IT(&htim2);
+    HAL_UART_Receive_IT(&huart1, rx_packet, 3);
+
+    while (1) {
+        // Якщо прапорець піднятий у перериванні — обробляємо пакет
+        if (packet_ready) {
+            uint8_t cmd = rx_packet[0];   // Код команди
+            uint8_t data = rx_packet[1];  // Параметр команди
+
+            // Перевірка контрольної суми вхідного пакету
+            if (Calc_CRC(rx_packet, 2) == rx_packet[2]) {
+                memset(tx_packet, 0, sizeof(tx_packet));
+                tx_packet[0] = cmd;       // Відповідь зазвичай починається з коду тієї ж команди
+                uint16_t tx_len = 3;      // Стандартна довжина відповіді (CMD, DATA, CRC)
+
+                switch (cmd) {
+                    case CMD_START:
+                        Mahjong_Generate_New_Layout(data); // Створення поля
+                        Timer_Start();                     // Запуск відліку часу
+                        // Копіюємо стан дошки (50 байт) у пакет відповіді
+                        memcpy(&tx_packet[1], Mahjong_Get_Board_State(), 50);
+                        tx_len = 52; // CMD + 50 байт дошки + CRC
+                        break;
+
+                    case CMD_RESET:
+                        cmd_reset();
+                        tx_packet[1] = 0x00; // Підтвердження скидання
+                        break;
+
+                    case CMD_SHUFFLE:
+                        // Перемішування плиток, якщо можливо
+                        if (cmd_shuffle() == 0xFF) tx_packet[1] = 0xFF; // Помилка
+                        else {
+                            memcpy(&tx_packet[1], Mahjong_Get_Board_State(), 50);
+                            tx_len = 52;
+                        }
+                        break;
+
+                    case CMD_SELECT:
+                        tx_packet[1] = cmd_select(data); // Вибір плитки
+                        break;
+
+                    case CMD_MATCH:
+                        tx_packet[1] = cmd_match(data);  // Спроба знайти пару
+                        break;
+
+                    case CMD_GIVE_UP:
+                        cmd_give_up();
+                        tx_packet[1] = 0x00;
+                        break;
+
+                    case CMD_HINT: {
+                        uint8_t idx1, idx2;
+                        if (cmd_hint(&idx1, &idx2)) { // Пошук доступної пари
+                            tx_packet[1] = idx1;
+                            tx_packet[2] = idx2;
+                        } else tx_packet[1] = 100;    // Код "підказок немає"
+                        tx_len = 4;
+                        break;
+                    }
+
+                    case CMD_SET_NAME:
+                        if (data > 0 && data <= 10) { // data тут — довжина імені
+                            uint8_t name_buf[12];
+                            __HAL_UART_CLEAR_OREFLAG(&huart1);
+                            // Додаткове синхронне читання самого імені після команди
+                            if (HAL_UART_Receive(&huart1, name_buf, data + 1, 500) == HAL_OK) {
+                                if (Calc_CRC(name_buf, data) == name_buf[data]) {
+                                    char name[11] = {0};
+                                    memcpy(name, name_buf, data);
+                                    Mahjong_SetPlayerName(name);
+                                }
+                            }
+                        }
+                        tx_packet[1] = 0x00;
+                        break;
+
+                    case CMD_GET_TIME: {
+                        uint32_t elapsed = Timer_GetSeconds();
+                        // Розбиття 32-бітного числа на 4 байти для передачі
+                        tx_packet[1] = (elapsed >> 24) & 0xFF;
+                        tx_packet[2] = (elapsed >> 16) & 0xFF;
+                        tx_packet[3] = (elapsed >> 8) & 0xFF;
+                        tx_packet[4] = elapsed & 0xFF;
+                        tx_len = 52; // Використовується фіксований розмір для стабільності
+                        break;
+                    }
+
+                    case CMD_GET_LEADERS:
+                        // Копіювання всієї таблиці лідерів (200 байт)
+                        memcpy(&tx_packet[1], leaderboard, 200);
+                        tx_packet[201] = Calc_CRC(tx_packet, 201);
+                        HAL_UART_Transmit(&huart1, tx_packet, 202, 1000);
+                        goto reset_rx; // Пропускаємо стандартну відправку в кінці switch
+                }
+
+                // Фінальне обчислення CRC та відправка відповіді клієнту
+                tx_packet[tx_len - 1] = Calc_CRC(tx_packet, tx_len - 1);
+                HAL_UART_Transmit(&huart1, tx_packet, tx_len, 100);
+            }
+
+        reset_rx:
+            // Скидання прапорця та підготовка до отримання наступної команди
+            packet_ready = 0;
+            HAL_UART_Receive_IT(&huart1, rx_packet, 3);
+        }
+    }
+}
+
+/* --- !!!
+ * 	EN:	Part of the STM32 configuration, review/changing it at your own risk
+ * 	UA:	Частина по конфігурації STM32, перегляд її/зміни його робите тільки на свій страх та ризик
+ * 		(я вас знайду, якщо ви щось зламаєте)
+ *  --- */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -281,6 +185,7 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
+
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -291,6 +196,7 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1;
   PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK1;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
@@ -299,26 +205,12 @@ void SystemClock_Config(void)
   }
 }
 
-/**
-  * @brief TIM2 Initialization Function
-  * @param None
-  * @retval None
-  */
 static void MX_TIM2_Init(void)
 {
-
-  /* USER CODE BEGIN TIM2_Init 0 */
-
-  /* USER CODE END TIM2_Init 0 */
-
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
-  /* USER CODE BEGIN TIM2_Init 1 */
-
-  /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  // Based on 48MHz System Clock. 48MHz / 48000 = 1000 Hz. 1000 / 1000 = 1 Hz (1 Second)
   htim2.Init.Prescaler = 47999;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 999;
@@ -339,31 +231,14 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN TIM2_Init 2 */
-  /* Enable the TIM2 global Interrupt in the NVIC */
   HAL_NVIC_SetPriority(TIM2_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(TIM2_IRQn);
-  /* USER CODE END TIM2_Init 2 */
-
 }
 
-/**
-  * @brief USART1 Initialization Function
-  * @param None
-  * @retval None
-  */
 static void MX_USART1_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART1_Init 0 */
-
-  /* USER CODE END USART1_Init 0 */
-
-  /* USER CODE BEGIN USART1_Init 1 */
-
-  /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200; // Updated to match Python script
+  huart1.Init.BaudRate = 115200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -376,77 +251,9 @@ static void MX_USART1_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART1_Init 2 */
-
-  /* USER CODE END USART1_Init 2 */
-
 }
 
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
-
-  /* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(G_LED_GPIO_Port, G_LED_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : G_LED_Pin */
-  GPIO_InitStruct.Pin = G_LED_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(G_LED_GPIO_Port, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-  /* USER CODE END MX_GPIO_Init_2 */
+void Error_Handler(void) {
+    __disable_irq();
+    while (1);
 }
-
-/* USER CODE BEGIN 4 */
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == USART1) {
-
-        // 1. Clear the hardware error flags
-        __HAL_UART_CLEAR_OREFLAG(huart); // Overrun
-        __HAL_UART_CLEAR_NEFLAG(huart);  // Noise
-        __HAL_UART_CLEAR_FEFLAG(huart);  // Framing
-
-        // 2. Restart the interrupt listener to catch the next 3 bytes safely
-        packet_ready = 0;
-        HAL_UART_Receive_IT(&huart1, rx_packet, 3);
-    }
-}
-/* USER CODE END 4 */
-
-/**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
-void Error_Handler(void)
-{
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
-  /* USER CODE END Error_Handler_Debug */
-}
-#ifdef USE_FULL_ASSERT
-void assert_failed(uint8_t *file, uint32_t line)
-{
-  /* USER CODE BEGIN 6 */
-  /* USER CODE END 6 */
-}
-#endif /* USE_FULL_ASSERT */
