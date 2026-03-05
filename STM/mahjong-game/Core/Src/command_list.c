@@ -1,116 +1,78 @@
-/* command_list.c */
 #include "mahjong.h"
-#include <stdlib.h> // for rand()
+#include <stdlib.h>
 
-// Internal state
-static int8_t active_selection = -1;
-static uint8_t shuffle_count = 0;
-#define MAX_SHUFFLES 5
+static int8_t active_selection = -1; // Індекс поточної вибраної плитки (-1, якщо нічого не вибрано)
+static uint8_t shuffle_count = 0;    // Лічильник перемішувань (зазвичай обмежений правилами)
 
-// --- Coordinate Helpers ---
+// --- Допоміжні функції координат ---
 
-// Returns 1 if a tile exists at this index, 0 otherwise
+// Перевіряє, чи є плитка в цій комірці (чи не порожня вона)
 static int is_tile_present(uint8_t index) {
-    uint8_t* board = Mahjong_Get_Board_State();
-    if (index >= TOTAL_PIECES) return 0;
-    return (board[index] != 0x00);
+    return (index < TOTAL_PIECES && Mahjong_Get_Board_State()[index] != 0);
 }
 
-// Converts Layer/Row/Col to Index. Returns -1 if out of bounds.
-static int get_index(int layer, int row, int col) {
-    if (current_layout == 0) { // Default 5x5 Square
-        if (layer == 0) { if (row < 0 || row >= 5 || col < 0 || col >= 5) return -1; return (row * 5) + col; }
-        if (layer == 1) { if (row < 0 || row >= 4 || col < 0 || col >= 4) return -1; return 25 + (row * 4) + col; }
-        if (layer == 2) { if (row < 0 || row >= 3 || col < 0 || col >= 3) return -1; return 41 + (row * 3) + col; }
-    } else { // Symmetrical Triangle Pyramid
-        if (layer == 0) {
-            if (row < 0 || row >= 7 || col < 0 || col > row) return -1;
-            int base = 0; for(int i=0; i<row; i++) base += (i+1); return base + col;
-        } else if (layer == 1) {
-            if (row < 0 || row >= 5 || col < 0 || col > row) return -1;
-            int base = 28; for(int i=0; i<row; i++) base += (i+1); return base + col;
-        } else if (layer == 2) {
-            if (row < 0 || row >= 3 || col < 0 || col > row) return -1;
-            int base = 43; for(int i=0; i<row; i++) base += (i+1); return base + col;
-        } else if (layer == 3) {
-            if (row == 0 && col == 0) return 49;
+// Перетворює 3D координати (L - шар, R - рядок, C - стовпець) в лінійний індекс масиву
+static int get_index(int l, int r, int c) {
+    if (current_layout == 0) { // Прямокутна піраміда
+        if (l == 0 && r >= 0 && r < 5 && c >= 0 && c < 5) return (r * 5) + c;
+        if (l == 1 && r >= 0 && r < 4 && c >= 0 && c < 4) return 25 + (r * 4) + c;
+        if (l == 2 && r >= 0 && r < 3 && c >= 0 && c < 3) return 41 + (r * 3) + c;
+    } else { // Трикутна або інша складна форма
+        int base[] = {0, 28, 43, 49};
+        int sizes[] = {7, 5, 3, 1};
+        if (l < 4 && r >= 0 && r < sizes[l] && c >= 0 && c <= r) {
+            int row_offset = 0;
+            for(int i=0; i<r; i++) row_offset += (i+1); // Розрахунок зміщення для трикутної сітки
+            return base[l] + row_offset + c;
         }
     }
-    return -1;
+    return -1; // Невірні координати
 }
 
-// Converts Index to Layer/Row/Col
-static void get_coord(uint8_t index, int* layer, int* row, int* col) {
-    if (current_layout == 0) { // Default Square
-        if (index < 25) { *layer = 0; *row = index / 5; *col = index % 5; }
-        else if (index < 41) { *layer = 1; index -= 25; *row = index / 4; *col = index % 4; }
-        else { *layer = 2; index -= 41; *row = index / 3; *col = index % 3; }
-    } else { // Symmetrical Triangle Pyramid
-        if (index < 28) {
-            *layer = 0; int r = 0, sum = 0;
-            while (sum + (r + 1) <= index) { sum += (r + 1); r++; }
-            *row = r; *col = index - sum;
-        } else if (index < 43) {
-            *layer = 1; index -= 28; int r = 0, sum = 0;
-            while (sum + (r + 1) <= index) { sum += (r + 1); r++; }
-            *row = r; *col = index - sum;
-        } else if (index < 49) {
-            *layer = 2; index -= 43; int r = 0, sum = 0;
-            while (sum + (r + 1) <= index) { sum += (r + 1); r++; }
-            *row = r; *col = index - sum;
-        } else {
-            *layer = 3; *row = 0; *col = 0;
+// Зворотна операція: отримує 3D координати з лінійного індексу
+static void get_coord(uint8_t idx, int* l, int* r, int* c) {
+    if (current_layout == 0) {
+        if (idx < 25) { *l = 0; *r = idx / 5; *c = idx % 5; }
+        else if (idx < 41) { *l = 1; idx -= 25; *r = idx / 4; *c = idx % 4; }
+        else { *l = 2; idx -= 41; *r = idx / 3; *c = idx % 3; }
+    } else {
+        int limits[] = {28, 43, 49, 50}, base = 0;
+        for(int i=0; i<4; i++) {
+            if (idx < limits[i]) {
+                *l = i; int r_idx = idx - base, row = 0, sum = 0;
+                while (sum + (row + 1) <= r_idx) { sum += (row + 1); row++; }
+                *r = row; *c = r_idx - sum; return;
+            }
+            base = limits[i];
         }
     }
 }
 
-// --- The Core Rule: Is Tile Exposed? ---
+// Перевірка, чи "відкрита" плитка (чи можна її брати)
+// Згідно з правилами: зверху не повинно бути плиток, і хоча б один бік (лівий чи правий) має бути вільним
 static int is_tile_exposed(uint8_t index) {
     if (!is_tile_present(index)) return 0;
+    int l, r, c; get_coord(index, &l, &r, &c);
 
-    int l, r, c;
-    get_coord(index, &l, &r, &c);
-
+    // 1. Перевірка зверху (чи не заблокована плитка верхнім шаром)
+    int next_l = l + 1;
     if (current_layout == 0) {
-        // Square Coverage Logic
-        int next_l = l + 1;
-        int blockers[] = {
-            get_index(next_l, r - 1, c - 1), get_index(next_l, r - 1, c),
-            get_index(next_l, r, c - 1),     get_index(next_l, r, c)
-        };
-        for (int i = 0; i < 4; i++) {
-            if (blockers[i] != -1 && is_tile_present(blockers[i])) return 0;
-        }
+        // У прямокутному лейауті перевіряємо 4 сусідні точки зверху
+        int b[] = {get_index(next_l, r-1, c-1), get_index(next_l, r-1, c), get_index(next_l, r, c-1), get_index(next_l, r, c)};
+        for(int i=0; i<4; i++) if (b[i] != -1 && is_tile_present(b[i])) return 0;
     } else {
-        // Symmetrical Triangle Coverage Logic
-        int next_l = l + 1;
-        // In this geometry, a tile from Layer L+1 Row R-1 perfectly overlaps
-        // the left and right halves of the tiles directly below it.
-        int blockers[] = {
-            get_index(next_l, r - 1, c - 1), // Top-Left Overlay
-            get_index(next_l, r - 1, c)      // Top-Right Overlay
-        };
-        for (int i = 0; i < 2; i++) {
-            if (blockers[i] != -1 && is_tile_present(blockers[i])) return 0; // Blocked from above
-        }
+        // У трикутному — 2 точки
+        int b[] = {get_index(next_l, r-1, c-1), get_index(next_l, r-1, c)};
+        for(int i=0; i<2; i++) if (b[i] != -1 && is_tile_present(b[i])) return 0;
     }
 
-    // X-Axis (Is it blocked on BOTH left and right sides?)
-    // This logic applies to BOTH layout types perfectly!
-    int idx_left = get_index(l, r, c - 1);
-    int idx_right = get_index(l, r, c + 1);
+    // 2. Перевірка боків (заблокована, якщо і зліва, і справа є сусіди)
+    if (is_tile_present(get_index(l, r, c-1)) && is_tile_present(get_index(l, r, c+1))) return 0;
 
-    int left_blocked = (idx_left != -1 && is_tile_present(idx_left));
-    int right_blocked = (idx_right != -1 && is_tile_present(idx_right));
-
-    if (left_blocked && right_blocked) return 0; // Blocked on both sides
-
-    return 1; // Exposed!
+    return 1; // Плитка вільна для ходу
 }
 
-
-// --- Command Implementations ---
-
+// Скидання гри до початкового стану
 void cmd_reset(void) {
     active_selection = -1;
     shuffle_count = 0;
@@ -118,128 +80,83 @@ void cmd_reset(void) {
     Mahjong_Generate_New_Layout(current_layout);
 }
 
-void cmd_give_up(void) {
-    cmd_reset();
-}
-uint8_t cmd_shuffle(void) {
-    if (shuffle_count >= MAX_SHUFFLES) return 0xFF;
+void cmd_give_up(void) { cmd_reset(); }
 
+// Перемішування плиток, що залишилися на полі (якщо гра зайшла у глухий кут)
+uint8_t cmd_shuffle(void) {
+    if (shuffle_count >= MAX_SHUFFLES) return 0xFF; // Вичерпано ліміт перемішувань
     uint8_t* board = Mahjong_Get_Board_State();
-    uint8_t active_tiles[TOTAL_PIECES];
-    uint8_t active_indices[TOTAL_PIECES];
+    uint8_t tiles[TOTAL_PIECES], ids[TOTAL_PIECES];
     int count = 0;
 
-    for (int i = 0; i < TOTAL_PIECES; i++) {
-        if (board[i] != 0x00) {
-            active_tiles[count] = board[i];
-            active_indices[count] = i;
-            count++;
-        }
-    }
+    // Збираємо всі наявні плитки та їх позиції
+    for (int i = 0; i < TOTAL_PIECES; i++) if (board[i]) { tiles[count] = board[i]; ids[count++] = i; }
 
+    // Алгоритм Фішера-Єйтса для випадкового перемішування
     for (int i = count - 1; i > 0; i--) {
         int j = rand() % (i + 1);
-        uint8_t temp = active_tiles[i];
-        active_tiles[i] = active_tiles[j];
-        active_tiles[j] = temp;
+        uint8_t tmp = tiles[i]; tiles[i] = tiles[j]; tiles[j] = tmp;
     }
 
-    for (int i = 0; i < count; i++) {
-        board[active_indices[i]] = active_tiles[i];
-    }
+    // Повертаємо перемішані плитки назад на ті ж самі позиції
+    for (int i = 0; i < count; i++) board[ids[i]] = tiles[i];
 
     shuffle_count++;
     active_selection = -1;
-    return 0x00;
+    return 0;
 }
 
+// Вибір плитки гравцем
 uint8_t cmd_select(uint8_t index) {
-    // UPDATED: Check if tile is exposed before allowing selection
-    if (!is_tile_exposed(index)) return 0xFF;
-
+    if (!is_tile_exposed(index)) return 0xFF; // Не можна вибрати заблоковану плитку
     active_selection = index;
-    return 0x00;
+    return 0;
 }
 
+// Спроба поєднати вибрану плитку з іншою
 uint8_t cmd_match(uint8_t index) {
-    if (active_selection == -1) return 0xFF;
-    if (index == active_selection) return 0xFF;
+    // Перевірка валідності: чи вибрано щось раніше, чи це не та сама плитка, чи вона відкрита
+    if (active_selection == -1 || index == active_selection || !is_tile_exposed(index)) return 0xFF;
 
-    // UPDATED: Check if target tile is exposed
-    if (!is_tile_exposed(index)) return 0xFF;
+    uint8_t* b = Mahjong_Get_Board_State();
+    uint8_t t1 = b[active_selection], t2 = b[index];
 
-    uint8_t* board = Mahjong_Get_Board_State();
-    uint8_t tile1 = board[active_selection];
-    uint8_t tile2 = board[index];
+    // Витягуємо групу плитки (верхні 3 біти)
+    uint8_t g1 = (t1 >> 5) & 7, g2 = (t2 >> 5) & 7;
 
-    uint8_t g1 = (tile1 >> 5) & 0x07;
-    uint8_t v1 = tile1 & 0x1F;
-    uint8_t g2 = (tile2 >> 5) & 0x07;
-    uint8_t v2 = tile2 & 0x1F;
+    // Умови збігу:
+    // 1. Однакова група ТА (Група 5 або 6 (бонусні) АБО абсолютно однакові ID плиток)
+    if (g1 == g2 && (g1 == 5 || g1 == 6 || t1 == t2)) {
+        b[active_selection] = b[index] = 0; // Видаляємо пару з поля
+        active_selection = -1;
 
-    int is_match = 0;
-    if (g1 == g2) {
-        if (g1 == GRP_FLOWERS || g1 == GRP_SEASONS) is_match = 1;
-        else if (v1 == v2) is_match = 1;
+        // Перевірка на перемогу (чи залишилися ще плитки)
+        for(int i=0; i<TOTAL_PIECES; i++) if(b[i]) return 1;
+
+        // Якщо порожньо — додаємо результат у таблицю лідерів
+        Add_HighScore(Mahjong_GetPlayerName(), Timer_GetSeconds());
+        return 1;
     }
 
-    if (is_match) {
-            board[active_selection] = 0x00;
-            board[index] = 0x00;
-            active_selection = -1;
-
-            // New win check logic
-            uint8_t game_won = 1;
-            for(int i = 0; i < TOTAL_PIECES; i++) {
-                if(board[i] != 0x00) {
-                    game_won = 0; // Found a tile, game is not over
-                    break;
-                }
-            }
-
-            if (game_won) {
-                // Stop the timer and save the score!
-                uint32_t final_time = Timer_GetSeconds();
-                char* player_name = Mahjong_GetPlayerName();
-                Add_HighScore(player_name, final_time);
-            }
-
-            return 0x01;
-        } else {
-            active_selection = -1;
-            return 0x00;
-        }
+    active_selection = -1; // Скидаємо вибір, якщо не співпало
+    return 0;
 }
 
+// Пошук підказки (пари доступних плиток)
 uint8_t cmd_hint(uint8_t *idx1, uint8_t *idx2) {
-    uint8_t* board = Mahjong_Get_Board_State();
-
+    uint8_t* b = Mahjong_Get_Board_State();
+    // Подвійний цикл для пошуку пари серед усіх плиток
     for (int i = 0; i < TOTAL_PIECES; i++) {
-        if (board[i] == 0 || !is_tile_exposed(i)) continue;
-
+        if (!b[i] || !is_tile_exposed(i)) continue;
         for (int j = i + 1; j < TOTAL_PIECES; j++) {
-            if (board[j] == 0 || !is_tile_exposed(j)) continue;
+            if (!b[j] || !is_tile_exposed(j)) continue;
 
-            uint8_t tile1 = board[i];
-            uint8_t tile2 = board[j];
-
-            // & 0x07 - це математична маска для читання бітів, не звертай уваги
-            uint8_t grp1 = (tile1 >> 5) & 0x07;
-            uint8_t grp2 = (tile2 >> 5) & 0x07;
-
-            // Якщо це Квіти (5) або Сезони (6) - перевіряємо тільки групу
-            if (grp1 == grp2 && (grp1 == 5 || grp1 == 6)) {
-                *idx1 = (uint8_t)i;
-                *idx2 = (uint8_t)j;
-                return 1;
-            }
-            // Для всіх інших - перевіряємо повний збіг плитки
-            else if (tile1 == tile2) {
-                *idx1 = (uint8_t)i;
-                *idx2 = (uint8_t)j;
+            uint8_t g1 = (b[i]>>5)&7, g2 = (b[j]>>5)&7;
+            if (g1 == g2 && (g1 == 5 || g1 == 6 || b[i] == b[j])) {
+                *idx1 = i; *idx2 = j; // Повертаємо індекси знайденої пари
                 return 1;
             }
         }
     }
-    return 0; // Пар не знайдено
+    return 0; // Підказок немає
 }
