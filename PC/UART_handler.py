@@ -23,6 +23,54 @@ class UARTHandler:
         except Exception:
             self.is_open = False
             return False
+        
+    def check_connection(self):
+        """Actively checks if the physical serial device is still present."""
+        if not self.is_open or not self.ser:
+            return False
+        try:
+            _ = self.ser.in_waiting
+            return True
+        except (serial.SerialException, OSError, AttributeError):
+            self.is_open = False
+            return False
+
+    def check_for_starting_packet(self):
+        """
+        Reads the buffer after a reconnect. If there is data (a starting packet),
+        or if the game clock reset, it means the STM32 lost power and rebooted.
+        """
+        if not self.is_connected(): return True 
+        try:
+            # 1. Listen for any spontaneous boot bytes (starting packet)
+            time.sleep(0.5) 
+            if self.ser.in_waiting > 0:
+                _ = self.ser.read(self.ser.in_waiting)
+                self.reset_buffer()
+                return True 
+                
+            # 2. Fallback: actively verify if RAM was wiped by checking the clock
+            self.reset_buffer()
+            payload = struct.pack("BB", 0x0B, 0x00) # CMD_GET_TIME
+            crc = self._calculate_crc(payload)
+            self.ser.write(payload + struct.pack("B", crc))
+            self.ser.flush()
+            
+            resp = self.read_packet_strictly(52, timeout_sec=1.0)
+            
+            # ---> THE FIX IS HERE <---
+            if resp is None:
+                # If the board doesn't answer the ping at all, its UART is dead. 
+                # Return True to force the game to exit to the main menu!
+                return True 
+                
+            if resp and resp[0] == 0x0B:
+                elapsed = int.from_bytes(resp[1:5], "big")
+                if elapsed < 2:  # Clock reset to 0 means power was lost!
+                    return True
+            return False
+        except Exception:
+            return True
 
     def close_port(self):
         if self.ser and self.ser.is_open:
@@ -110,7 +158,7 @@ class UARTHandler:
             self.is_open = False
             return None
 
-    def reset_buffer(self):
+    def reset_buffer(self): 
         if self.is_connected():
             try:
                 self.ser.reset_input_buffer()
