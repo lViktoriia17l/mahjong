@@ -551,7 +551,7 @@ Discarded input sections
  .debug_macro   0x00000000       0x16 ./Core/Src/protocol.o
  .debug_macro   0x00000000      0x146 ./Core/Src/protocol.o
  .debug_line    0x00000000      0xa17 ./Core/Src/protocol.o
- .debug_str     0x00000000    0x6e156 ./Core/Src/protocol.o
+ .debug_str     0x00000000    0x6e16b ./Core/Src/protocol.o
  .comment       0x00000000       0x44 ./Core/Src/protocol.o
  .debug_frame   0x00000000       0x90 ./Core/Src/protocol.o
  .ARM.attributes
@@ -4687,12 +4687,12 @@ LOAD C:/ST/STM32CubeIDE_2.0.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.exte
 
 .debug_str      0x00000000    0x7397f
  .debug_str     0x00000000    0x7397f ./Core/Src/Game_engine.o
-                               0x74d2 (size before relaxing)
- .debug_str     0x0007397f     0x7468 ./Core/Src/command_list.o
- .debug_str     0x0007397f    0x6d748 ./Core/Src/game_save.o
- .debug_str     0x0007397f    0x6e50f ./Core/Src/main.o
+                               0x74e7 (size before relaxing)
+ .debug_str     0x0007397f     0x747d ./Core/Src/command_list.o
+ .debug_str     0x0007397f    0x6d75d ./Core/Src/game_save.o
+ .debug_str     0x0007397f    0x6e524 ./Core/Src/main.o
  .debug_str     0x0007397f    0x6adf2 ./Core/Src/stm32f0xx_hal_msp.o
- .debug_str     0x0007397f    0x6a99a ./Core/Src/stm32f0xx_it.o
+ .debug_str     0x0007397f    0x6a9af ./Core/Src/stm32f0xx_it.o
  .debug_str     0x0007397f     0x985d ./Core/Src/syscalls.o
  .debug_str     0x0007397f     0x7607 ./Core/Src/sysmem.o
  .debug_str     0x0007397f    0x6a46e ./Core/Src/system_stm32f0xx.o
